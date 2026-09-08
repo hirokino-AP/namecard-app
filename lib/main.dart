@@ -8,12 +8,12 @@ import 'services/url_scheme_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/card_list_screen.dart';
 import 'screens/call_result_screen.dart';
-// import 'firebase_options.dart'; // FlutterFire CLI実行後にコメント解除
+import 'firebase_options.dart'; // FlutterFire CLI実行後にコメント解除
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(
-    // options: DefaultFirebaseOptions.currentPlatform, // FlutterFire CLI実行後にコメント解除
+    options: DefaultFirebaseOptions.currentPlatform, // FlutterFire CLI実行後にコメント解除
   );
   runApp(
     MultiProvider(
