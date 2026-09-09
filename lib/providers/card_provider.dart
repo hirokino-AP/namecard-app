@@ -130,6 +130,16 @@ class CardProvider extends ChangeNotifier {
   }
 
 
+  Future<int> importFromItunes(String userId) async {
+    try {
+      final count = await _db.importFromItunes(userId);
+      if (count > 0) await loadCards(userId);
+      return count;
+    } catch (e) {
+      return 0;
+    }
+  }
+
   Future<Map<String, int>> importFromCsv(String userId) async {
     int success = 0;
     int skip = 0;

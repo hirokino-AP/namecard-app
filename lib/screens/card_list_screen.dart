@@ -28,6 +28,24 @@ class _CardListScreenState extends State<CardListScreen> {
 
   Future<void> _loadCards() async {
     final uid = context.read<AuthProvider>().uid;
+    // iTunesからのインポートを確認
+    final imported = await context.read<CardProvider>().importFromItunes(uid);
+    if (imported > 0 && mounted) {
+      showCupertinoDialog(
+        context: context,
+        builder: (_) => CupertinoAlertDialog(
+          title: const Text('インポート完了'),
+          content: Text('iTunesから\$imported件の名刺をインポートしました。'),
+          actions: [
+            CupertinoDialogAction(
+              isDefaultAction: true,
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+    }
     await context.read<CardProvider>().loadCards(uid);
   }
 

@@ -1,7 +1,10 @@
 // lib/db/database_helper.dart
+import 'dart:io';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
+import 'package:path_provider/path_provider.dart';
 import '../models/business_card.dart';
+
 
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._internal();
@@ -148,6 +151,41 @@ class DatabaseHelper {
     final result = await db.rawQuery(
         'SELECT COUNT(*) as cnt FROM business_cards WHERE user_id = ?', [userId]);
     return result.first['cnt'] as int;
+  }
+
+
+  // iTunesで転送されたnamecard.dbを自動インポート
+  Future<int> importFromItunes(String userId) async {
+    try {
+      final docsDir = await getApplicationDocumentsDirectory();
+      final srcPath = join(docsDir.path, 'namecard.db');
+      if (!await File(srcPath).exists()) return 0;
+
+      final srcDb = await openDatabase(srcPath, readOnly: true);
+      final rows = await srcDb.query('business_cards');
+      await srcDb.close();
+
+      if (rows.isEmpty) return 0;
+
+      final db = await database;
+      int count = 0;
+      await db.transaction((txn) async {
+        for (final row in rows) {
+          final map = Map<String, dynamic>.from(row);
+          map['user_id'] = userId;
+          map.remove('id');
+          await txn.insert('business_cards', map,
+              conflictAlgorithm: ConflictAlgorithm.ignore);
+          count++;
+        }
+      });
+
+      // インポート済みファイルを削除
+      await File(srcPath).delete();
+      return count;
+    } catch (e) {
+      return 0;
+    }
   }
 
   Future<void> close() async {
