@@ -32,6 +32,8 @@ dependencies:
 
   # アイコン
   cupertino_icons: ^1.0.8
+  file_picker: ^12.2.0
+  csv: ^8.0.0
 
 dev_dependencies:
   flutter_test:

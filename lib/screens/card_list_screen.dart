@@ -41,6 +41,29 @@ class _CardListScreenState extends State<CardListScreen> {
     context.read<CardProvider>().clearSearch();
   }
 
+
+  Future<void> _importCsv() async {
+    final uid = context.read<AuthProvider>().uid;
+    final result = await context.read<CardProvider>().importFromCsv(uid);
+    if (!mounted) return;
+    final cancelled = result['cancelled'] == 1;
+    if (cancelled) return;
+    showCupertinoDialog(
+      context: context,
+      builder: (_) => CupertinoAlertDialog(
+        title: const Text('インポート完了'),
+        content: Text("成功: ${result['success']}件\nスキップ: ${result['skip']}件\nエラー: ${result['error']}件"),
+        actions: [
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _confirmLogout() {
     showCupertinoDialog(
       context: context,
@@ -111,12 +134,19 @@ class _CardListScreenState extends State<CardListScreen> {
           onPressed: _confirmLogout,
           child: const Icon(CupertinoIcons.square_arrow_right, size: 22),
         ),
-        trailing: CupertinoButton(
-          padding: EdgeInsets.zero,
-          onPressed: () => Navigator.of(context).push(
-              CupertinoPageRoute(builder: (_) => const CardEditScreen())),
-          child: const Icon(CupertinoIcons.add, size: 26),
-        ),
+        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+          CupertinoButton(
+            padding: EdgeInsets.zero,
+            onPressed: _importCsv,
+            child: const Icon(CupertinoIcons.arrow_down_doc, size: 22),
+          ),
+          CupertinoButton(
+            padding: EdgeInsets.zero,
+            onPressed: () => Navigator.of(context).push(
+                CupertinoPageRoute(builder: (_) => const CardEditScreen())),
+            child: const Icon(CupertinoIcons.add, size: 26),
+          ),
+        ]),
       ),
       child: SafeArea(child: Column(children: [
         Padding(

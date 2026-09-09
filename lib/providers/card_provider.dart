@@ -1,4 +1,6 @@
-// lib/providers/card_provider.dart
+import 'dart:io';
+import 'package:csv/csv.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import '../models/business_card.dart';
 import '../db/database_helper.dart';
@@ -127,6 +129,60 @@ class CardProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+
+  Future<Map<String, int>> importFromCsv(String userId) async {
+    int success = 0;
+    int skip = 0;
+    int error = 0;
+    try {
+      final files = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['csv'],
+      );
+      if (files.isEmpty) return {'success': 0, 'skip': 0, 'error': 0, 'cancelled': 1};
+      final file = File(files.first.path!);
+      final rawContent = await file.readAsString();
+      final rows = Csv().decode(rawContent);
+      if (rows.isEmpty) return {'success': 0, 'skip': 0, 'error': 0};
+      final dataRows = rows.skip(1).toList();
+      for (final row in dataRows) {
+        try {
+          String v(int i) => i < row.length ? row[i].toString().trim() : '';
+          if (v(0).isEmpty) { skip++; continue; }
+          final card = BusinessCard(
+            userId: userId,
+            name: v(0),
+            nameKana: v(1),
+            company: v(2),
+            companyKana: v(3),
+            department: v(4),
+            title: v(5),
+            email: v(6),
+            phone: v(7),
+            mobilePhone: v(8),
+            fax: v(9),
+            note: v(10),
+            zipCode: v(11),
+            address: v(12),
+            projectCodes: [],
+            createdAt: DateTime.now(),
+            updatedAt: DateTime.now(),
+          );
+          await _db.insert(card);
+          success++;
+        } catch (e) {
+          error++;
+        }
+      }
+      await loadCards(userId);
+      return {'success': success, 'skip': skip, 'error': error};
+    } catch (e) {
+      _errorMessage = 'CSVインポートに失敗しました: $e';
+      notifyListeners();
+      return {'success': 0, 'skip': 0, 'error': 0};
+    }
+  }
+
   void clearError() {
     _errorMessage = '';
     notifyListeners();
@@ -137,3 +193,4 @@ class CardProvider extends ChangeNotifier {
     notifyListeners();
   }
 }
+// CSVインポート機能は別ファイルで追加
