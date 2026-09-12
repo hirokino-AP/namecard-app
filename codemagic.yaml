@@ -9,6 +9,11 @@ workflows:
         distribution_type: app_store
         bundle_identifier: com.hirokino.namecardapp
     scripts:
+      - name: Set build number
+        script: |
+          BUILD_NUMBER=$(date +%s)
+          sed -i "s/version: .*+.*/version: 0.9.0+$BUILD_NUMBER/" namecard_app/pubspec.yaml
+          echo "Build number set to: $BUILD_NUMBER"
       - name: Get Flutter packages
         script: |
           cd namecard_app && flutter pub get
@@ -17,7 +22,6 @@ workflows:
           cd namecard_app
           flutter build ipa \
             --release \
-            --build-number=$(($(date +%s) % 100000)) \
             --export-options-plist=/Users/builder/export_options.plist
     artifacts:
       - namecard_app/build/ios/ipa/*.ipa
