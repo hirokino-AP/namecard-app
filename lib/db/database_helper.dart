@@ -214,7 +214,7 @@ class DatabaseHelper {
       });
       return count;
     } catch (e) {
-      return 0;
+      return -999;
     }
   }
 
