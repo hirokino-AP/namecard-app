@@ -3,7 +3,7 @@ description: 名刺管理アプリ Ver0.9
 
 publish_to: 'none'
 
-version: 0.9.0+1
+version: 0.9.0+8
 
 environment:
   sdk: '>=3.10.0 <4.0.0'
