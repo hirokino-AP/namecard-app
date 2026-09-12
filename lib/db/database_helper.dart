@@ -175,7 +175,7 @@ class DatabaseHelper {
           map['user_id'] = userId;
           map.remove('id');
           await txn.insert('business_cards', map,
-              conflictAlgorithm: ConflictAlgorithm.ignore);
+              conflictAlgorithm: ConflictAlgorithm.replace);
           count++;
         }
       });
