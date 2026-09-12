@@ -62,7 +62,7 @@ class _CardListScreenState extends State<CardListScreen> {
 
 
   Future<void> _importDb() async {
-    final result = await FilePicker.platform.pickFiles(
+    final result = await FilePicker.instance.pickFiles(
       type: FileType.any,
     );
     if (result == null || result.files.isEmpty) return;

@@ -166,7 +166,7 @@ class DatabaseHelper {
         throw Exception('DEBUG_PATH:\${docsDir.path}|FILES:\$fileNames');
       }
 
-      final srcDb = await openDatabase(usePath, readOnly: true);
+      final srcDb = await openDatabase(srcPath, readOnly: true);
       final rows = await srcDb.query('business_cards');
       await srcDb.close();
 
@@ -186,7 +186,7 @@ class DatabaseHelper {
       });
 
       // インポート済みファイルを削除
-      await File(usePath).delete();
+      await File(srcPath).delete();
       return count;
     } catch (e) {
       return 0;
