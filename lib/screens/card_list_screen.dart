@@ -62,9 +62,9 @@ class _CardListScreenState extends State<CardListScreen> {
 
 
   Future<void> _importDb() async {
-    final result = await FilePickerPlatform.instance.pickFiles();
-    if (result == null || result.files.isEmpty) return;
-    final path = result.files.single.path;
+    final files = await FilePickerPlatform.instance.pickFiles();
+    if (files == null || files.isEmpty) return;
+    final path = files.single.path;
     if (path == null) return;
     final uid = context.read<AuthProvider>().uid;
     final count = await DatabaseHelper.instance.importFromPath(path, uid);
