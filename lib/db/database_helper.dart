@@ -157,15 +157,25 @@ class DatabaseHelper {
   // iTunesで転送されたnamecard.dbを自動インポート
   Future<int> importFromItunes(String userId) async {
     try {
+      // iTunesファイル共有はDocumentsフォルダ
       final docsDir = await getApplicationDocumentsDirectory();
       final srcPath = join(docsDir.path, 'namecard.db');
-      if (!await File(srcPath).exists()) return 0;
+      // 代替パスも確認
+      final dbDir = await getDatabasesPath();
+      final altPath = join(dbDir, 'namecard.db');
+      final usePath = await File(srcPath).exists() ? srcPath : altPath;
+      final fileExists = await File(srcPath).exists();
+      if (!fileExists) {
+        final files = await docsDir.list().toList();
+        final fileNames = files.map((f) => f.path.split('/').last).join(', ');
+        throw Exception('DEBUG_PATH:\${docsDir.path}|FILES:\$fileNames');
+      }
 
-      final srcDb = await openDatabase(srcPath, readOnly: true);
+      final srcDb = await openDatabase(usePath, readOnly: true);
       final rows = await srcDb.query('business_cards');
       await srcDb.close();
 
-      if (rows.isEmpty) return 0;
+      if (rows.isEmpty) return -99;
 
       final db = await database;
       int count = 0;
@@ -181,7 +191,7 @@ class DatabaseHelper {
       });
 
       // インポート済みファイルを削除
-      await File(srcPath).delete();
+      await File(usePath).delete();
       return count;
     } catch (e) {
       return 0;
