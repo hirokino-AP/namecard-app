@@ -5,7 +5,7 @@ import 'package:provider/provider.dart';
 import '../models/business_card.dart';
 import '../providers/auth_provider.dart';
 import '../providers/card_provider.dart';
-import 'package:file_picker/file_picker.dart' show FilePicker, FilePickerResult, FileType;
+import 'package:file_picker/file_picker.dart';
 import '../db/database_helper.dart';
 import 'card_detail_screen.dart';
 import 'card_edit_screen.dart';
@@ -62,7 +62,7 @@ class _CardListScreenState extends State<CardListScreen> {
 
 
   Future<void> _importDb() async {
-    final result = await FilePicker.platform.pickFiles(allowMultiple: false);
+    final result = await FilePickerPlatform.instance.pickFiles();
     if (result == null || result.files.isEmpty) return;
     final path = result.files.single.path;
     if (path == null) return;
