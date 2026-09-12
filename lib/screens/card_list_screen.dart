@@ -27,27 +27,26 @@ class _CardListScreenState extends State<CardListScreen> {
   void dispose() { _searchController.dispose(); super.dispose(); }
 
   Future<void> _loadCards() async {
-    final uid = context.read<AuthProvider>().uid;
-    // iTunesからのインポートを確認
-    final imported = await context.read<CardProvider>().importFromItunes(uid);
-    if (imported > 0 && mounted) {
-      showCupertinoDialog(
-        context: context,
-        builder: (_) => CupertinoAlertDialog(
-          title: const Text('インポート完了'),
-          content: Text('iTunesから\$imported件の名刺をインポートしました。'),
-          actions: [
-            CupertinoDialogAction(
-              isDefaultAction: true,
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('OK'),
-            ),
-          ],
-        ),
-      );
-    }
-    await context.read<CardProvider>().loadCards(uid);
+  final uid = context.read<AuthProvider>().uid;
+  final imported = await context.read<CardProvider>().importFromItunes(uid);
+  if (mounted) {
+    showCupertinoDialog(
+      context: context,
+      builder: (_) => CupertinoAlertDialog(
+        title: const Text('デバッグ'),
+        content: Text('importFromItunes結果: $imported'),
+        actions: [
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
+  await context.read<CardProvider>().loadCards(uid);
+}
 
   void _onSearchChanged(String keyword) {
     final uid = context.read<AuthProvider>().uid;
