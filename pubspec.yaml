@@ -32,7 +32,7 @@ dependencies:
 
   # アイコン
   cupertino_icons: ^1.0.8
-  file_picker: ^12.2.0
+  file_picker: ^12.3.0
   csv: ^8.0.0
   path_provider: ^2.1.6
 

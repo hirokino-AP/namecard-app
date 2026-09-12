@@ -157,13 +157,8 @@ class DatabaseHelper {
   // iTunesで転送されたnamecard.dbを自動インポート
   Future<int> importFromItunes(String userId) async {
     try {
-      // iTunesファイル共有はDocumentsフォルダ
       final docsDir = await getApplicationDocumentsDirectory();
       final srcPath = join(docsDir.path, 'namecard.db');
-      // 代替パスも確認
-      final dbDir = await getDatabasesPath();
-      final altPath = join(dbDir, 'namecard.db');
-      final usePath = await File(srcPath).exists() ? srcPath : altPath;
       final fileExists = await File(srcPath).exists();
       if (!fileExists) {
         final files = await docsDir.list().toList();
@@ -192,6 +187,31 @@ class DatabaseHelper {
 
       // インポート済みファイルを削除
       await File(usePath).delete();
+      return count;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  Future<int> importFromPath(String srcPath, String userId) async {
+    try {
+      if (!await File(srcPath).exists()) return 0;
+      final srcDb = await openDatabase(srcPath, readOnly: true);
+      final rows = await srcDb.query('business_cards');
+      await srcDb.close();
+      if (rows.isEmpty) return 0;
+      final db = await database;
+      int count = 0;
+      await db.transaction((txn) async {
+        for (final row in rows) {
+          final map = Map<String, dynamic>.from(row);
+          map['user_id'] = userId;
+          map.remove('id');
+          await txn.insert('business_cards', map,
+              conflictAlgorithm: ConflictAlgorithm.replace);
+          count++;
+        }
+      });
       return count;
     } catch (e) {
       return 0;
