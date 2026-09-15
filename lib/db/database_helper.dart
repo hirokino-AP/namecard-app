@@ -196,7 +196,11 @@ class DatabaseHelper {
   Future<int> importFromPath(String srcPath, String userId) async {
     try {
       if (!await File(srcPath).exists()) return 0;
-      final srcDb = await openDatabase(srcPath, readOnly: true);
+      // iOSのsandbox制限回避: 一時ディレクトリにコピーしてからopen
+      final tmpDir = await getTemporaryDirectory();
+      final tmpPath = join(tmpDir.path, 'import_tmp.db');
+      await File(srcPath).copy(tmpPath);
+      final srcDb = await openDatabase(tmpPath, readOnly: true);
       final rows = await srcDb.query('business_cards');
       await srcDb.close();
       if (rows.isEmpty) return 0;
