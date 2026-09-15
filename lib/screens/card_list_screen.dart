@@ -1,5 +1,6 @@
 // lib/screens/card_list_screen.dart
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart' show CircleAvatar, RefreshIndicator;
 import 'package:provider/provider.dart';
 import '../models/business_card.dart';
@@ -33,8 +34,11 @@ class _CardListScreenState extends State<CardListScreen> {
   }
 
   Future<void> _importFromItunes() async {
+    const channel = MethodChannel('com.hirokino.namecardapp/document_picker');
+    final String? path = await channel.invokeMethod('pickDatabase');
+    if (path == null || !mounted) return;
     final uid = context.read<AuthProvider>().uid;
-    final count = await context.read<CardProvider>().importFromItunes(uid);
+    final count = await context.read<CardProvider>().importFromPath(path, uid);
     if (!mounted) return;
     showCupertinoDialog(
       context: context,
