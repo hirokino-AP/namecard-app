@@ -1,10 +1,10 @@
 // lib/screens/card_list_screen.dart
+import 'dart:async';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart' show CircleAvatar, RefreshIndicator, Scrollbar, Theme, ThemeData, ScrollbarThemeData, WidgetStateProperty;
 import 'package:provider/provider.dart';
 import 'package:speech_to_text/speech_to_text.dart';
-import 'dart:async';
 import '../models/business_card.dart';
 import '../providers/auth_provider.dart';
 import '../providers/card_provider.dart';
@@ -24,7 +24,6 @@ class _CardListScreenState extends State<CardListScreen> {
   bool _isListening = false;
   bool _speechAvailable = false;
   Timer? _debounce;
-  // 部署名学習リスト（DBから自動収集）
   List<String> _departmentDict = [];
 
   @override
@@ -49,12 +48,13 @@ class _CardListScreenState extends State<CardListScreen> {
   Future<void> _initSpeech() async {
     final available = await _speech.initialize(
       onError: (e) => setState(() => _isListening = false),
-      onStatus: (s) { if (s == 'done' || s == 'notListening') setState(() => _isListening = false); },
+      onStatus: (s) {
+        if (s == 'done' || s == 'notListening') setState(() => _isListening = false);
+      },
     );
     setState(() => _speechAvailable = available);
   }
 
-  // DBから部署名を収集して学習リストを構築
   Future<void> _buildDepartmentDict() async {
     final cards = context.read<CardProvider>().cards;
     final depts = cards
@@ -62,38 +62,74 @@ class _CardListScreenState extends State<CardListScreen> {
         .where((d) => d.isNotEmpty)
         .toSet()
         .toList();
-    depts.sort((a, b) => b.length.compareTo(a.length)); // 長い順に並べる
+    depts.sort((a, b) => b.length.compareTo(a.length));
     setState(() => _departmentDict = depts);
   }
 
-  // 音声認識テキストを検索用に正規化
-  String _normalizeVoiceInput(String text) {
-    // 「さん」「様」を語尾から除去
-    String result = text.trim();
-    result = result.replaceAll(RegExp(r'さん$'), '');
-    result = result.replaceAll(RegExp(r'様$'), '');
-    result = result.trim();
-
-    // スペース区切りの各トークンにも適用
-    final tokens = result.split(RegExp(r'[\s\u3000]+'));
-    final normalized = tokens.map((t) {
-      String tok = t.replaceAll(RegExp(r'さん$'), '').replaceAll(RegExp(r'様$'), '').trim();
-      return tok;
-    }).where((t) => t.isNotEmpty).toList();
-
-    // 部署名学習辞書で補正（ひらがな→漢字）
-    final corrected = normalized.map((tok) {
-      for (final dept in _departmentDict) {
-        // 部署名のひらがな読みが含まれていれば漢字に置換
-        // 簡易マッチ：トークンが部署名に含まれるか確認
-        if (dept.contains(tok) || tok.contains(dept)) {
-          return dept;
+  // 編集距離（レーベンシュタイン距離）
+  int _editDistance(String a, String b) {
+    final m = a.length, n = b.length;
+    final dp = List.generate(m + 1, (i) => List.filled(n + 1, 0));
+    for (int i = 0; i <= m; i++) dp[i][0] = i;
+    for (int j = 0; j <= n; j++) dp[0][j] = j;
+    for (int i = 1; i <= m; i++) {
+      for (int j = 1; j <= n; j++) {
+        if (a[i - 1] == b[j - 1]) {
+          dp[i][j] = dp[i - 1][j - 1];
+        } else {
+          dp[i][j] = 1 + [dp[i-1][j], dp[i][j-1], dp[i-1][j-1]].reduce((a, b) => a < b ? a : b);
         }
       }
-      return tok;
-    }).toList();
+    }
+    return dp[m][n];
+  }
 
-    return corrected.join(' ');
+  // 類似部署名を候補として返す
+  List<String> _findSimilarDepts(String token) {
+    if (token.isEmpty || _departmentDict.isEmpty) return [];
+    final threshold = (token.length * 0.5).ceil().clamp(1, 3);
+    final candidates = _departmentDict.where((dept) {
+      final dist = _editDistance(token, dept);
+      return dist <= threshold && dist > 0;
+    }).toList();
+    candidates.sort((a, b) => _editDistance(token, a).compareTo(_editDistance(token, b)));
+    return candidates.take(3).toList();
+  }
+
+  // 「もしかして？」候補提示
+  void _showSuggestions(List<String> candidates, String original) {
+    if (candidates.isEmpty || !mounted) return;
+    showCupertinoDialog(
+      context: context,
+      builder: (_) => CupertinoAlertDialog(
+        title: const Text('もしかして？'),
+        content: Text('「$original」の候補:'),
+        actions: [
+          ...candidates.map((dept) => CupertinoDialogAction(
+            onPressed: () {
+              Navigator.of(context).pop();
+              _searchController.text = dept;
+              _onSearchChanged(dept);
+            },
+            child: Text(dept),
+          )),
+          CupertinoDialogAction(
+            isDestructiveAction: true,
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('そのまま検索'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _normalizeVoiceInput(String text) {
+    String result = text.trim();
+    final tokens = result.split(RegExp(r'[\s\u3000]+'));
+    final normalized = tokens.map((t) {
+      return t.replaceAll(RegExp(r'さん$'), '').replaceAll(RegExp(r'様$'), '').trim();
+    }).where((t) => t.isNotEmpty).toList();
+    return normalized.join(' ');
   }
 
   Future<void> _startListening() async {
@@ -111,6 +147,15 @@ class _CardListScreenState extends State<CardListScreen> {
           _searchController.text = normalized;
           _onSearchChanged(normalized);
           setState(() => _isListening = false);
+          // 部署名候補提示
+          final tokens = normalized.split(RegExp(r'[\s\u3000]+')).where((t) => t.isNotEmpty).toList();
+          for (final tok in tokens) {
+            final candidates = _findSimilarDepts(tok);
+            if (candidates.isNotEmpty && !_departmentDict.contains(tok)) {
+              _showSuggestions(candidates, tok);
+              break;
+            }
+          }
         }
       },
     );
@@ -363,19 +408,19 @@ class _CardListScreenState extends State<CardListScreen> {
                         thickness: WidgetStateProperty.all(4),
                       ),
                     ),
-                    child: RefreshIndicator.adaptive(
+                    child: Scrollbar(
+                      controller: _scrollController,
+                      thumbVisibility: true,
+                      thickness: 4,
+                      child: RefreshIndicator.adaptive(
                         onRefresh: _loadCards,
-                        child: Scrollbar(
+                        child: ListView.builder(
                           controller: _scrollController,
-                          thumbVisibility: true,
-                          thickness: 4,
-                          child: ListView.builder(
-                            controller: _scrollController,
-                            itemCount: cards.length,
-                            itemBuilder: (context, index) => _buildCardItem(cards[index]),
-                          ),
+                          itemCount: cards.length,
+                          itemBuilder: (context, index) => _buildCardItem(cards[index]),
                         ),
                       ),
+                    ),
                   )),
       ])),
     );
