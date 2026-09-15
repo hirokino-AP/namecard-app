@@ -160,11 +160,9 @@ class DatabaseHelper {
       final docsDir = await getApplicationDocumentsDirectory();
       final srcPath = join(docsDir.path, 'namecard.db');
       final fileExists = await File(srcPath).exists();
-      if (!fileExists) {
-        final files = await docsDir.list().toList();
-        final fileNames = files.map((f) => f.path.split('/').last).join(', ');
-        throw Exception('DEBUG_PATH:' + docsDir.path + '|FILES:' + fileNames);
-      }
+      final files = await docsDir.list().toList();
+      final fileNames = files.map((f) => f.path.split('/').last).join(', ');
+      throw Exception('PATH:' + docsDir.path + '|EXISTS:' + fileExists.toString() + '|FILES:' + fileNames);
 
       // sqflite sandbox回避: tmpディレクトリ経由でopen
       final tmpDir = await getTemporaryDirectory();
