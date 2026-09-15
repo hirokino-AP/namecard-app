@@ -163,7 +163,7 @@ class DatabaseHelper {
       if (!fileExists) {
         final files = await docsDir.list().toList();
         final fileNames = files.map((f) => f.path.split('/').last).join(', ');
-        throw Exception('DEBUG_PATH:\${docsDir.path}|FILES:\$fileNames');
+        throw Exception('DEBUG_PATH:' + docsDir.path + '|FILES:' + fileNames);
       }
 
       // sqflite sandbox回避: tmpディレクトリ経由でopen
@@ -194,7 +194,7 @@ class DatabaseHelper {
       await File(srcPath).delete();
       return count;
     } catch (e) {
-      return 0;
+      return -888;
     }
   }
 
