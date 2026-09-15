@@ -12,7 +12,7 @@ workflows:
       - name: Set build number
         script: |
           BUILD_NUMBER=$(date +%s)
-          sed -i "s/version: .*+.*/version: 0.9.0+$BUILD_NUMBER/" namecard_app/pubspec.yaml
+          sed -i '' "s/version: .*+.*/version: 0.9.0+${BUILD_NUMBER}/" namecard_app/pubspec.yaml
           echo "Build number set to: $BUILD_NUMBER"
       - name: Get Flutter packages
         script: |
