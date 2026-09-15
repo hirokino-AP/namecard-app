@@ -3,38 +3,35 @@ import UIKit
 import UniformTypeIdentifiers
 
 @main
-@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate, UIDocumentPickerDelegate {
+@objc class AppDelegate: FlutterAppDelegate, UIDocumentPickerDelegate {
   private var documentPickerResult: FlutterResult?
 
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
-  }
+    GeneratedPluginRegistrant.register(with: self)
 
-  func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
-    GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
-
+    let controller = window?.rootViewController as! FlutterViewController
     let channel = FlutterMethodChannel(
       name: "com.hirokino.namecardapp/document_picker",
-      binaryMessenger: engineBridge.pluginRegistry.registrar(forPlugin: "DocumentPicker").messenger()
+      binaryMessenger: controller.binaryMessenger
     )
 
-    channel.setMethodCallHandler { [weak self] call, result in
+    channel.setMethodCallHandler { [weak self] (call: FlutterMethodCall, result: @escaping FlutterResult) in
       if call.method == "pickDatabase" {
         self?.documentPickerResult = result
         let types = [UTType.data]
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: types)
         picker.delegate = self
         picker.allowsMultipleSelection = false
-        if let vc = UIApplication.shared.keyWindow?.rootViewController {
-          vc.present(picker, animated: true)
-        }
+        controller.present(picker, animated: true)
       } else {
         result(FlutterMethodNotImplemented)
       }
     }
+
+    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
   func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
