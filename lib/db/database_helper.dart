@@ -1,5 +1,6 @@
 // lib/db/database_helper.dart
 import 'dart:io';
+import 'dart:convert';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
@@ -209,6 +210,28 @@ class DatabaseHelper {
       await db.transaction((txn) async {
         for (final row in rows) {
           final map = Map<String, dynamic>.from(row);
+          map['user_id'] = userId;
+          map.remove('id');
+          await txn.insert('business_cards', map,
+              conflictAlgorithm: ConflictAlgorithm.replace);
+          count++;
+        }
+      });
+      return count;
+    } catch (e) {
+      return -999;
+    }
+  }
+
+  Future<int> importFromJson(String jsonStr, String userId) async {
+    try {
+      final List<dynamic> rows = json.decode(jsonStr);
+      if (rows.isEmpty) return 0;
+      final db = await database;
+      int count = 0;
+      await db.transaction((txn) async {
+        for (final row in rows) {
+          final map = Map<String, dynamic>.from(row as Map);
           map['user_id'] = userId;
           map.remove('id');
           await txn.insert('business_cards', map,

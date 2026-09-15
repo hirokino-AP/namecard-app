@@ -35,16 +35,16 @@ class _CardListScreenState extends State<CardListScreen> {
 
   Future<void> _importFromItunes() async {
     const channel = MethodChannel('com.hirokino.namecardapp/document_picker');
-    final String? path = await channel.invokeMethod('pickDatabase');
-    if (path == null || !mounted) return;
+    final String? json = await channel.invokeMethod('pickDatabase');
+    if (json == null || !mounted) return;
     final uid = context.read<AuthProvider>().uid;
-    final count = await context.read<CardProvider>().importFromPath(path, uid);
+    final count = await context.read<CardProvider>().importFromJson(json, uid);
     if (!mounted) return;
     showCupertinoDialog(
       context: context,
       builder: (_) => CupertinoAlertDialog(
         title: const Text('インポート完了'),
-        content: Text('$count件の名刺をインポートしました。'),
+        content: Text('\$count件の名刺をインポートしました。'),
         actions: [
           CupertinoDialogAction(
             isDefaultAction: true,
