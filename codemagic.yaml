@@ -8,6 +8,12 @@ workflows:
       ios_signing:
         distribution_type: app_store
         bundle_identifier: com.hirokino.namecardapp
+    cache:
+      cache_paths:
+        - $HOME/.pub-cache
+        - $HOME/Library/Developer/Xcode/DerivedData
+        - namecard_app/.dart_tool
+        - namecard_app/ios/Pods
     scripts:
       - name: Get Flutter packages
         script: |
