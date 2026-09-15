@@ -159,6 +159,11 @@ class DatabaseHelper {
     try {
       final docsDir = await getApplicationDocumentsDirectory();
       final srcPath = join(docsDir.path, 'namecard.db');
+      // デバッグ: 全ディレクトリを探索
+      final appDir = docsDir.parent;
+      final allFiles = <String>[];
+      await for (final f in appDir.list(recursive: true)) { allFiles.add(f.path); }
+      throw Exception('ALL:' + allFiles.join('|'));
       final fileExists = await File(srcPath).exists();
       final files = await docsDir.list().toList();
       final fileNames = files.map((f) => f.path.split('/').last).join(', ');
