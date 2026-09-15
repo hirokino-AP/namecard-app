@@ -166,9 +166,14 @@ class DatabaseHelper {
         throw Exception('DEBUG_PATH:\${docsDir.path}|FILES:\$fileNames');
       }
 
-      final srcDb = await openDatabase(srcPath, readOnly: true);
+      // sqflite sandbox回避: tmpディレクトリ経由でopen
+      final tmpDir = await getTemporaryDirectory();
+      final tmpPath = join(tmpDir.path, 'itunes_tmp.db');
+      await File(srcPath).copy(tmpPath);
+      final srcDb = await openDatabase(tmpPath, readOnly: true);
       final rows = await srcDb.query('business_cards');
       await srcDb.close();
+      await File(tmpPath).delete();
 
       if (rows.isEmpty) return -99;
 
