@@ -5,7 +5,6 @@ import 'package:provider/provider.dart';
 import '../models/business_card.dart';
 import '../providers/auth_provider.dart';
 import '../providers/card_provider.dart';
-import 'package:file_picker/file_picker.dart';
 import '../db/database_helper.dart';
 import 'card_detail_screen.dart';
 import 'card_edit_screen.dart';
@@ -60,33 +59,6 @@ class _CardListScreenState extends State<CardListScreen> {
     context.read<CardProvider>().clearSearch();
   }
 
-
-  Future<void> _importDb() async {
-    final files = await FilePickerPlatform.instance.pickFiles();
-    if (files == null || files.isEmpty) return;
-    final path = files.single.path;
-    if (path == null) return;
-    final uid = context.read<AuthProvider>().uid;
-    final count = await DatabaseHelper.instance.importFromPath(path, uid);
-    if (!mounted) return;
-    showCupertinoDialog(
-      context: context,
-      builder: (_) => CupertinoAlertDialog(
-        title: const Text('インポート完了'),
-        content: Text('$count件の名刺をインポートしました。'),
-        actions: [
-          CupertinoDialogAction(
-            isDefaultAction: true,
-            onPressed: () {
-              Navigator.of(context).pop();
-              _loadCards();
-            },
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-  }
 
   Future<void> _importCsv() async {
     final uid = context.read<AuthProvider>().uid;
@@ -181,11 +153,7 @@ class _CardListScreenState extends State<CardListScreen> {
           child: const Icon(CupertinoIcons.square_arrow_right, size: 22),
         ),
         trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-          CupertinoButton(
-            padding: EdgeInsets.zero,
-            onPressed: _importDb,
-            child: const Icon(CupertinoIcons.square_arrow_down, size: 22),
-          ),
+
           CupertinoButton(
             padding: EdgeInsets.zero,
             onPressed: _importCsv,
