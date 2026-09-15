@@ -93,15 +93,16 @@ class DatabaseHelper {
 
   Future<List<BusinessCard>> search({required String userId, required String keyword}) async {
     final db = await database;
-    final keywords = keyword.trim().split(RegExp(r'[\s\u3000]+')).where((k) => k.isNotEmpty).toList();
-    if (keywords.isEmpty) return [];
-    final cond = keywords.map((_) => '(name_kana LIKE ? OR name LIKE ? OR company_kana LIKE ? OR company LIKE ? OR department LIKE ? OR title LIKE ? OR email LIKE ? OR phone LIKE ? OR mobile_phone LIKE ? OR note LIKE ?)').join(' AND ');
-    final args = <dynamic>[userId];
-    for (final k in keywords) { final q = '%' + k + '%'; args.addAll([q,q,q,q,q,q,q,q,q,q]); }
-    final maps = await db.rawQuery('SELECT * FROM business_cards WHERE user_id = ? AND ' + cond + ' ORDER BY name_kana ASC', args);
+    final q = '%$keyword%';
+    final maps = await db.query('business_cards',
+        where: '''user_id = ? AND (
+          name_kana LIKE ? OR name LIKE ? OR company_kana LIKE ? OR
+          company LIKE ? OR department LIKE ? OR email LIKE ? OR
+          phone LIKE ? OR mobile_phone LIKE ? OR note LIKE ?)''',
+        whereArgs: [userId, q, q, q, q, q, q, q, q, q],
+        orderBy: 'name_kana ASC');
     return maps.map((m) => BusinessCard.fromMap(m)).toList();
   }
-
 
   Future<List<BusinessCard>> searchByNameAndCompany({
     required String userId, required String name, String? company}) async {
