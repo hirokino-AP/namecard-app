@@ -136,6 +136,12 @@ class CardProvider extends ChangeNotifier {
     return count;
   }
 
+  Future<int> importFromPath(String path, String userId) async {
+    final count = await _db.importFromPath(path, userId);
+    if (count > 0) await loadCards(userId);
+    return count;
+  }
+
   Future<Map<String, int>> importFromCsv(String userId) async {
     int success = 0;
     int skip = 0;
