@@ -1,9 +1,10 @@
 // lib/screens/card_list_screen.dart
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/material.dart' show CircleAvatar, RefreshIndicator, Scrollbar, ScrollbarThemeData, Theme, ThemeData;
+import 'package:flutter/material.dart' show CircleAvatar, RefreshIndicator, Scrollbar, Theme, ThemeData, ScrollbarThemeData, WidgetStateProperty;
 import 'package:provider/provider.dart';
 import 'package:speech_to_text/speech_to_text.dart';
+import 'dart:async';
 import '../models/business_card.dart';
 import '../providers/auth_provider.dart';
 import '../providers/card_provider.dart';
@@ -22,13 +23,17 @@ class _CardListScreenState extends State<CardListScreen> {
   final _speech = SpeechToText();
   bool _isListening = false;
   bool _speechAvailable = false;
+  Timer? _debounce;
+  // 部署名学習リスト（DBから自動収集）
+  List<String> _departmentDict = [];
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadCards();
-      _initSpeech();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _loadCards();
+      await _initSpeech();
+      await _buildDepartmentDict();
     });
   }
 
@@ -36,6 +41,7 @@ class _CardListScreenState extends State<CardListScreen> {
   void dispose() {
     _searchController.dispose();
     _scrollController.dispose();
+    _debounce?.cancel();
     _speech.stop();
     super.dispose();
   }
@@ -48,6 +54,48 @@ class _CardListScreenState extends State<CardListScreen> {
     setState(() => _speechAvailable = available);
   }
 
+  // DBから部署名を収集して学習リストを構築
+  Future<void> _buildDepartmentDict() async {
+    final cards = context.read<CardProvider>().cards;
+    final depts = cards
+        .map((c) => c.department.trim())
+        .where((d) => d.isNotEmpty)
+        .toSet()
+        .toList();
+    depts.sort((a, b) => b.length.compareTo(a.length)); // 長い順に並べる
+    setState(() => _departmentDict = depts);
+  }
+
+  // 音声認識テキストを検索用に正規化
+  String _normalizeVoiceInput(String text) {
+    // 「さん」「様」を語尾から除去
+    String result = text.trim();
+    result = result.replaceAll(RegExp(r'さん$'), '');
+    result = result.replaceAll(RegExp(r'様$'), '');
+    result = result.trim();
+
+    // スペース区切りの各トークンにも適用
+    final tokens = result.split(RegExp(r'[\s\u3000]+'));
+    final normalized = tokens.map((t) {
+      String tok = t.replaceAll(RegExp(r'さん$'), '').replaceAll(RegExp(r'様$'), '').trim();
+      return tok;
+    }).where((t) => t.isNotEmpty).toList();
+
+    // 部署名学習辞書で補正（ひらがな→漢字）
+    final corrected = normalized.map((tok) {
+      for (final dept in _departmentDict) {
+        // 部署名のひらがな読みが含まれていれば漢字に置換
+        // 簡易マッチ：トークンが部署名に含まれるか確認
+        if (dept.contains(tok) || tok.contains(dept)) {
+          return dept;
+        }
+      }
+      return tok;
+    }).toList();
+
+    return corrected.join(' ');
+  }
+
   Future<void> _startListening() async {
     if (!_speechAvailable) {
       _showAlert('音声認識が使えません', 'マイクのアクセスを許可してください。');
@@ -58,9 +106,10 @@ class _CardListScreenState extends State<CardListScreen> {
       listenOptions: SpeechListenOptions(localeId: 'ja_JP'),
       onResult: (result) {
         if (result.finalResult) {
-          final text = result.recognizedWords;
-          _searchController.text = text;
-          _onSearchChanged(text);
+          final raw = result.recognizedWords;
+          final normalized = _normalizeVoiceInput(raw);
+          _searchController.text = normalized;
+          _onSearchChanged(normalized);
           setState(() => _isListening = false);
         }
       },
@@ -101,8 +150,11 @@ class _CardListScreenState extends State<CardListScreen> {
   }
 
   void _onSearchChanged(String keyword) {
-    final uid = context.read<AuthProvider>().uid;
-    context.read<CardProvider>().search(uid, keyword);
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 300), () {
+      final uid = context.read<AuthProvider>().uid;
+      context.read<CardProvider>().search(uid, keyword);
+    });
   }
 
   void _clearSearch() {
@@ -242,7 +294,6 @@ class _CardListScreenState extends State<CardListScreen> {
         ]),
       ),
       child: SafeArea(child: Column(children: [
-        // 検索バー＋マイクボタン
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
           child: Row(children: [
@@ -275,7 +326,6 @@ class _CardListScreenState extends State<CardListScreen> {
             ),
           ]),
         ),
-        // 件数表示
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
           child: Row(children: [
@@ -292,7 +342,6 @@ class _CardListScreenState extends State<CardListScreen> {
               ),
           ]),
         ),
-        // リスト（スクロールバー付き）
         Expanded(child: isLoading
             ? const Center(child: CupertinoActivityIndicator())
             : cards.isEmpty
@@ -314,17 +363,19 @@ class _CardListScreenState extends State<CardListScreen> {
                         thickness: WidgetStateProperty.all(4),
                       ),
                     ),
-                    child: Scrollbar(
-                      controller: _scrollController,
-                      thumbVisibility: true,
-                      thickness: 4,
-                      child: RefreshIndicator.adaptive(
+                    child: RefreshIndicator.adaptive(
                         onRefresh: _loadCards,
-                        child: CupertinoListSection.insetGrouped(
-                          children: cards.map(_buildCardItem).toList(),
+                        child: Scrollbar(
+                          controller: _scrollController,
+                          thumbVisibility: true,
+                          thickness: 4,
+                          child: ListView.builder(
+                            controller: _scrollController,
+                            itemCount: cards.length,
+                            itemBuilder: (context, index) => _buildCardItem(cards[index]),
+                          ),
                         ),
                       ),
-                    ),
                   )),
       ])),
     );
