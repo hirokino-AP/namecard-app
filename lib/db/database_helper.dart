@@ -19,7 +19,7 @@ class DatabaseHelper {
 
   Future<Database> _initDB() async {
     final dbPath = await getDatabasesPath();
-    final path = join(dbPath, 'namecard.db');
+    final path = join(dbPath, 'app_namecard.db');
     return await openDatabase(path, version: 1, onCreate: _onCreate);
   }
 
@@ -159,15 +159,7 @@ class DatabaseHelper {
     try {
       final docsDir = await getApplicationDocumentsDirectory();
       final srcPath = join(docsDir.path, 'namecard.db');
-      // デバッグ: 全ディレクトリを探索
-      final appDir = docsDir.parent;
-      final allFiles = <String>[];
-      await for (final f in appDir.list(recursive: true)) { allFiles.add(f.path); }
-      throw Exception('ALL:' + allFiles.join('|'));
-      final fileExists = await File(srcPath).exists();
-      final files = await docsDir.list().toList();
-      final fileNames = files.map((f) => f.path.split('/').last).join(', ');
-      throw Exception('PATH:' + docsDir.path + '|EXISTS:' + fileExists.toString() + '|FILES:' + fileNames);
+      if (!await File(srcPath).exists()) return 0;
 
       // sqflite sandbox回避: tmpディレクトリ経由でopen
       final tmpDir = await getTemporaryDirectory();
@@ -197,7 +189,7 @@ class DatabaseHelper {
       await File(srcPath).delete();
       return count;
     } catch (e) {
-      throw Exception('ITUNES_ERR:' + e.toString());
+      return 0;
     }
   }
 

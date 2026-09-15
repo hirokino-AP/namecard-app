@@ -28,32 +28,32 @@ class _CardListScreenState extends State<CardListScreen> {
   void dispose() { _searchController.dispose(); super.dispose(); }
 
   Future<void> _loadCards() async {
-  final uid = context.read<AuthProvider>().uid;
-  int imported = 0;
-  String errMsg = '';
-  try {
-    imported = await context.read<CardProvider>().importFromItunes(uid);
-  } catch (e) {
-    errMsg = e.toString();
+    final uid = context.read<AuthProvider>().uid;
+    await context.read<CardProvider>().loadCards(uid);
   }
-  if (mounted) {
+
+  Future<void> _importFromItunes() async {
+    final uid = context.read<AuthProvider>().uid;
+    final count = await context.read<CardProvider>().importFromItunes(uid);
+    if (!mounted) return;
     showCupertinoDialog(
       context: context,
       builder: (_) => CupertinoAlertDialog(
-        title: const Text('デバッグ'),
-        content: Text(errMsg.isNotEmpty ? errMsg : 'importFromItunes結果: $imported'),
+        title: const Text('インポート完了'),
+        content: Text('$count件の名刺をインポートしました。'),
         actions: [
           CupertinoDialogAction(
             isDefaultAction: true,
-            onPressed: () => Navigator.of(context).pop(),
+            onPressed: () {
+              Navigator.of(context).pop();
+              _loadCards();
+            },
             child: const Text('OK'),
           ),
         ],
       ),
     );
   }
-  await context.read<CardProvider>().loadCards(uid);
-}
 
   void _onSearchChanged(String keyword) {
     final uid = context.read<AuthProvider>().uid;
@@ -160,6 +160,11 @@ class _CardListScreenState extends State<CardListScreen> {
         ),
         trailing: Row(mainAxisSize: MainAxisSize.min, children: [
 
+          CupertinoButton(
+            padding: EdgeInsets.zero,
+            onPressed: _importFromItunes,
+            child: const Icon(CupertinoIcons.square_arrow_down, size: 22),
+          ),
           CupertinoButton(
             padding: EdgeInsets.zero,
             onPressed: _importCsv,
