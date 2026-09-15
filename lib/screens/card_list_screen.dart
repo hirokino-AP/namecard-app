@@ -29,13 +29,19 @@ class _CardListScreenState extends State<CardListScreen> {
 
   Future<void> _loadCards() async {
   final uid = context.read<AuthProvider>().uid;
-  final imported = await context.read<CardProvider>().importFromItunes(uid);
+  int imported = 0;
+  String errMsg = '';
+  try {
+    imported = await context.read<CardProvider>().importFromItunes(uid);
+  } catch (e) {
+    errMsg = e.toString();
+  }
   if (mounted) {
     showCupertinoDialog(
       context: context,
       builder: (_) => CupertinoAlertDialog(
         title: const Text('デバッグ'),
-        content: Text('importFromItunes結果: $imported'),
+        content: Text(errMsg.isNotEmpty ? errMsg : 'importFromItunes結果: $imported'),
         actions: [
           CupertinoDialogAction(
             isDefaultAction: true,

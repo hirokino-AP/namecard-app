@@ -194,7 +194,7 @@ class DatabaseHelper {
       await File(srcPath).delete();
       return count;
     } catch (e) {
-      return -888;
+      throw Exception('ITUNES_ERR:' + e.toString());
     }
   }
 
