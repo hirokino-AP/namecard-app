@@ -196,9 +196,13 @@ class DatabaseHelper {
   Future<int> importFromPath(String srcPath, String userId) async {
     try {
       if (!await File(srcPath).exists()) return 0;
-      final srcDb = await openDatabase(srcPath, readOnly: true);
+      final tmpDir = await getTemporaryDirectory();
+      final tmpPath = join(tmpDir.path, 'import_tmp.db');
+      await File(srcPath).copy(tmpPath);
+      final srcDb = await openDatabase(tmpPath, readOnly: true);
       final rows = await srcDb.query('business_cards');
       await srcDb.close();
+      await File(tmpPath).delete();
       if (rows.isEmpty) return 0;
       final db = await database;
       int count = 0;
