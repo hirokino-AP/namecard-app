@@ -17,9 +17,11 @@ import UniformTypeIdentifiers
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
 
+    let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "DocumentPicker")
+    let messenger = registrar!.messenger()
     let channel = FlutterMethodChannel(
       name: "com.hirokino.namecardapp/document_picker",
-      binaryMessenger: engineBridge.binaryMessenger
+      binaryMessenger: messenger
     )
     self.flutterChannel = channel
 
