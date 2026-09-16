@@ -32,11 +32,11 @@ class OcrService {
       final statusCode = response.statusCode;
       final responseBody = response.body.length > 1000 ? response.body.substring(0, 1000) : response.body;
       if (statusCode != 200) {
-        throw Exception('Status: \${response.statusCode}\nBody: \${response.body.substring(0, response.body.length > 500 ? 500 : response.body.length)}');
+        throw Exception("Status: ${response.statusCode}\nBody: ${response.body.substring(0, response.body.length > 500 ? 500 : response.body.length)}");
       }
       final data = jsonDecode(response.body);
       final annotations = data['responses']?[0]?['textAnnotations'] as List?;
-      if (annotations == null || annotations.isEmpty) throw Exception('annotations empty\nResponse: \$responseBody');
+      if (annotations == null || annotations.isEmpty) throw Exception("annotations empty\nResponse: $responseBody");
       final fullText = annotations[0]['description'] as String? ?? '';
       final lines = fullText.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
       return _parseLines(lines);
