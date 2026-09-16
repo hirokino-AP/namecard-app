@@ -13,6 +13,10 @@ workflows:
       xcode: latest
       groups:
         - namecard_secrets
+      vars:
+        APP_STORE_CONNECT_ISSUER_ID: $APP_STORE_CONNECT_ISSUER_ID
+        APP_STORE_CONNECT_KEY_IDENTIFIER: $APP_STORE_CONNECT_KEY_IDENTIFIER
+        APP_STORE_CONNECT_PRIVATE_KEY: $APP_STORE_CONNECT_PRIVATE_KEY
     scripts:
       - name: Set up keychain
         script: |
@@ -21,7 +25,10 @@ workflows:
         script: |
           app-store-connect fetch-signing-files com.hirokino.namecardapp \
             --type IOS_APP_STORE \
-            --create
+            --create \
+            --issuer-id $APP_STORE_CONNECT_ISSUER_ID \
+            --key-id $APP_STORE_CONNECT_KEY_IDENTIFIER \
+            --private-key $APP_STORE_CONNECT_PRIVATE_KEY
           keychain add-certificates
           xcode-project use-profiles
       - name: Get Flutter packages
