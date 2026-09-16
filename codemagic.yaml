@@ -19,13 +19,12 @@ workflows:
           keychain initialize
       - name: Fetch signing files
         script: |
-          echo "$APP_STORE_CONNECT_PRIVATE_KEY" > /tmp/private_key.p8
           app-store-connect fetch-signing-files com.hirokino.namecardapp \
             --type IOS_APP_STORE \
             --create \
             --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
             --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
-            --private-key "@file:/tmp/private_key.p8"
+            --private-key "@env:APP_STORE_CONNECT_PRIVATE_KEY"
           keychain add-certificates
           xcode-project use-profiles
       - name: Get Flutter packages
