@@ -212,6 +212,25 @@ class CardProvider extends ChangeNotifier {
     }
   }
 
+  Future<int> deleteAllCards(String userId) async {
+    _setLoading(true);
+    try {
+      final count = await _db.deleteAllByUser(userId);
+      _cards = [];
+      _searchResults = [];
+      _searchKeyword = '';
+      _errorMessage = '';
+      notifyListeners();
+      return count;
+    } catch (e) {
+      _errorMessage = '全削除に失敗しました: $e';
+      notifyListeners();
+      return 0;
+    } finally {
+      _setLoading(false);
+    }
+  }
+
   void clearError() {
     _errorMessage = '';
     notifyListeners();

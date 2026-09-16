@@ -13,26 +13,19 @@ workflows:
       xcode: latest
       groups:
         - namecard_secrets
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.hirokino.namecardapp
     scripts:
-      - name: Set up code signing
-        script: |
-          keychain initialize
-          app-store-connect fetch-signing-files com.hirokino.namecardapp \
-            --type IOS_APP_STORE \
-            --create
-          app-store-connect create-certificate \
-            --type IOS_DISTRIBUTION
-          keychain add-certificates
-          xcode-project use-profiles
       - name: Get Flutter packages
         script: |
           flutter pub get
       - name: Build IPA
         script: |
-          echo "API KEY LENGTH: ${#GOOGLE_VISION_API_KEY}"
           flutter build ipa \
             --release \
-            --dart-define=GOOGLE_VISION_API_KEY=$GOOGLE_VISION_API_KEY
+            --dart-define=GOOGLE_VISION_API_KEY=$GOOGLE_VISION_API_KEY \
+            --export-options-plist=/Users/builder/export_options.plist
     artifacts:
       - build/ios/ipa/*.ipa
     publishing:

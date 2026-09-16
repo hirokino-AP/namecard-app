@@ -163,6 +163,21 @@ class _CardListScreenState extends State<CardListScreen> {
             isDestructiveAction: true,
             onPressed: () {
               Navigator.of(context).pop();
+              _confirmDeleteAll();
+            },
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(CupertinoIcons.trash, size: 20, color: CupertinoColors.systemRed),
+                SizedBox(width: 8),
+                Text('全データ削除'),
+              ],
+            ),
+          ),
+          CupertinoActionSheetAction(
+            isDestructiveAction: true,
+            onPressed: () {
+              Navigator.of(context).pop();
               _confirmLogout();
             },
             child: const Row(
@@ -179,6 +194,72 @@ class _CardListScreenState extends State<CardListScreen> {
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('キャンセル'),
         ),
+      ),
+    );
+  }
+
+  void _confirmDeleteAll() {
+    showCupertinoDialog(
+      context: context,
+      builder: (_) => CupertinoAlertDialog(
+        title: const Text('全データ削除'),
+        content: const Text('すべての名刺データを削除します。\nこの操作は元に戻せません。\n\n本当に削除しますか？'),
+        actions: [
+          CupertinoDialogAction(
+            isDestructiveAction: true,
+            onPressed: () {
+              Navigator.of(context).pop();
+              _confirmDeleteAllFinal();
+            },
+            child: const Text('削除する'),
+          ),
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('キャンセル'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmDeleteAllFinal() {
+    showCupertinoDialog(
+      context: context,
+      builder: (_) => CupertinoAlertDialog(
+        title: const Text('最終確認'),
+        content: const Text('⚠️ 本当によろしいですか？\nすべての名刺データが完全に削除されます。\nこの操作は絶対に元に戻せません。'),
+        actions: [
+          CupertinoDialogAction(
+            isDestructiveAction: true,
+            onPressed: () async {
+              Navigator.of(context).pop();
+              final uid = context.read<AuthProvider>().uid;
+              final count = await context.read<CardProvider>().deleteAllCards(uid);
+              if (!mounted) return;
+              showCupertinoDialog(
+                context: context,
+                builder: (_) => CupertinoAlertDialog(
+                  title: const Text('削除完了'),
+                  content: Text('\$count件の名刺を削除しました。'),
+                  actions: [
+                    CupertinoDialogAction(
+                      isDefaultAction: true,
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('OK'),
+                    ),
+                  ],
+                ),
+              );
+            },
+            child: const Text('完全に削除する'),
+          ),
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('キャンセル'),
+          ),
+        ],
       ),
     );
   }
