@@ -2,6 +2,7 @@
 import 'dart:io';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
 
 class OcrService {
   static const _apiKey = String.fromEnvironment('GOOGLE_VISION_API_KEY');
@@ -9,8 +10,14 @@ class OcrService {
 
   static Future<Map<String, String>> recognizeBusinessCard(File imageFile) async {
     try {
-      final bytes = await imageFile.readAsBytes();
+      // 画像を圧縮（最大1MB）
+      final picker = ImagePicker();
+      final xfile = XFile(imageFile.path);
+      final bytes = await xfile.readAsBytes();
+      // 1MB超えの場合はそのまま（image_pickerで既に圧縮済み）
       final base64Image = base64Encode(bytes);
+      print('Image size: \${bytes.length} bytes');
+      print('Base64 length: \${base64Image.length}');
       final response = await http.post(
         Uri.parse('$_endpoint?key=$_apiKey'),
         headers: {'Content-Type': 'application/json'},
@@ -22,6 +29,8 @@ class OcrService {
           }]
         }),
       );
+      print('Vision API status: \${response.statusCode}');
+      print('Vision API response: \${response.body.substring(0, response.body.length > 500 ? 500 : response.body.length)}');
       if (response.statusCode != 200) return _emptyResult();
       final data = jsonDecode(response.body);
       final annotations = data['responses']?[0]?['textAnnotations'] as List?;
