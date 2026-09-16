@@ -30,7 +30,7 @@ class OcrService {
       final lines = fullText.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
       return _parseLines(lines);
     } catch (e) {
-      return _emptyResult();
+      throw Exception('Vision API error: $e');
     }
   }
 
