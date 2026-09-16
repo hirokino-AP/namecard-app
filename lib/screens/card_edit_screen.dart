@@ -117,7 +117,8 @@ class _CardEditScreenState extends State<CardEditScreen> {
       if (result['zipCode']!.isNotEmpty) _zipCode.text = result['zipCode']!;
       if (result['address']!.isNotEmpty) _address.text = result['address']!;
     });
-    _showAlert('読み取り完了', '内容を確認して必要に応じて修正してください。');
+    final raw = result.values.where((v) => v.isNotEmpty).join('\n');
+    _showAlert('読み取り結果', raw.isEmpty ? '何も読み取れませんでした。\n(APIは正常に応答しました)' : raw);
   }
 
   Future<void> _save() async {
