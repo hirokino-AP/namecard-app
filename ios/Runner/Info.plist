@@ -66,6 +66,10 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>名刺を撮影してOCR読み取りに使用します</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>名刺画像を選択するために使用します</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>音声で名刺を検索するために使用します</string>
 	<key>NSMicrophoneUsageDescription</key>

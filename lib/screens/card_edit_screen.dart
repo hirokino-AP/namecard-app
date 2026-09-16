@@ -1,9 +1,12 @@
 // lib/screens/card_edit_screen.dart
+import 'dart:io';
 import 'package:flutter/cupertino.dart';
 import 'package:provider/provider.dart';
+import 'package:image_picker/image_picker.dart';
 import '../models/business_card.dart';
 import '../providers/auth_provider.dart';
 import '../providers/card_provider.dart';
+import '../services/ocr_service.dart';
 
 class CardEditScreen extends StatefulWidget {
   final BusinessCard? card;
@@ -16,6 +19,7 @@ class _CardEditScreenState extends State<CardEditScreen> {
   late final TextEditingController _name, _nameKana, _company, _companyKana,
       _department, _title, _email, _phone, _mobilePhone, _fax,
       _zipCode, _address, _note, _projectCodes;
+  bool _isOcrLoading = false;
 
   bool get _isEditing => widget.card != null;
 
@@ -46,6 +50,74 @@ class _CardEditScreenState extends State<CardEditScreen> {
       c.dispose();
     }
     super.dispose();
+  }
+
+  Future<void> _scanBusinessCard() async {
+    // カメラかギャラリーか選択
+    showCupertinoModalPopup(
+      context: context,
+      builder: (_) => CupertinoActionSheet(
+        title: const Text('名刺を読み取る'),
+        actions: [
+          CupertinoActionSheetAction(
+            onPressed: () { Navigator.of(context).pop(); _pickImage(ImageSource.camera); },
+            child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(CupertinoIcons.camera, size: 20),
+              SizedBox(width: 8),
+              Text('カメラで撮影'),
+            ]),
+          ),
+          CupertinoActionSheetAction(
+            onPressed: () { Navigator.of(context).pop(); _pickImage(ImageSource.gallery); },
+            child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(CupertinoIcons.photo, size: 20),
+              SizedBox(width: 8),
+              Text('写真ライブラリから選択'),
+            ]),
+          ),
+        ],
+        cancelButton: CupertinoActionSheetAction(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('キャンセル'),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickImage(ImageSource source) async {
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(
+      source: source,
+      imageQuality: 90,
+    );
+    if (picked == null || !mounted) return;
+
+    setState(() => _isOcrLoading = true);
+    try {
+      final file = File(picked.path);
+      final result = await OcrService.recognizeBusinessCard(file);
+      _applyOcrResult(result);
+    } catch (e) {
+      if (mounted) _showAlert('エラー', 'OCR読み取りに失敗しました: $e');
+    } finally {
+      if (mounted) setState(() => _isOcrLoading = false);
+    }
+  }
+
+  void _applyOcrResult(Map<String, String> result) {
+    setState(() {
+      if (result['name']!.isNotEmpty) _name.text = result['name']!;
+      if (result['company']!.isNotEmpty) _company.text = result['company']!;
+      if (result['department']!.isNotEmpty) _department.text = result['department']!;
+      if (result['title']!.isNotEmpty) _title.text = result['title']!;
+      if (result['email']!.isNotEmpty) _email.text = result['email']!;
+      if (result['phone']!.isNotEmpty) _phone.text = result['phone']!;
+      if (result['mobilePhone']!.isNotEmpty) _mobilePhone.text = result['mobilePhone']!;
+      if (result['fax']!.isNotEmpty) _fax.text = result['fax']!;
+      if (result['zipCode']!.isNotEmpty) _zipCode.text = result['zipCode']!;
+      if (result['address']!.isNotEmpty) _address.text = result['address']!;
+    });
+    _showAlert('読み取り完了', '内容を確認して必要に応じて修正してください。');
   }
 
   Future<void> _save() async {
@@ -105,12 +177,31 @@ class _CardEditScreenState extends State<CardEditScreen> {
         middle: Text(_isEditing ? '名刺を編集' : '名刺を追加'),
         leading: CupertinoButton(padding: EdgeInsets.zero,
             onPressed: () => Navigator.of(context).pop(), child: const Text('キャンセル')),
-        trailing: CupertinoButton(padding: EdgeInsets.zero,
-            onPressed: isLoading ? null : _save,
-            child: isLoading ? const CupertinoActivityIndicator()
-                : const Text('保存', style: TextStyle(fontWeight: FontWeight.bold))),
+        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+          CupertinoButton(
+            padding: EdgeInsets.zero,
+            onPressed: _isOcrLoading ? null : _scanBusinessCard,
+            child: _isOcrLoading
+                ? const CupertinoActivityIndicator()
+                : const Icon(CupertinoIcons.camera, size: 24),
+          ),
+          CupertinoButton(padding: EdgeInsets.zero,
+              onPressed: isLoading ? null : _save,
+              child: isLoading ? const CupertinoActivityIndicator()
+                  : const Text('保存', style: TextStyle(fontWeight: FontWeight.bold))),
+        ]),
       ),
       child: SafeArea(child: ListView(children: [
+        // OCR読み取り中インジケーター
+        if (_isOcrLoading)
+          const Padding(
+            padding: EdgeInsets.all(16),
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              CupertinoActivityIndicator(),
+              SizedBox(width: 8),
+              Text('名刺を読み取っています...', style: TextStyle(color: CupertinoColors.secondaryLabel)),
+            ]),
+          ),
         CupertinoListSection.insetGrouped(header: const Text('基本情報'), children: [
           _buildField(label: '氏名', controller: _name),
           _buildField(label: 'よみがな', controller: _nameKana),

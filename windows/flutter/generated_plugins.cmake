@@ -5,6 +5,7 @@
 list(APPEND FLUTTER_PLUGIN_LIST
   app_links
   cloud_firestore
+  file_selector_windows
   firebase_auth
   firebase_core
   speech_to_text_windows
