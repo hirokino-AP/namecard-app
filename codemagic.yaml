@@ -4,8 +4,6 @@ workflows:
     instance_type: mac_mini_m2
     environment:
       flutter: stable
-      vars:
-        GOOGLE_VISION_API_KEY: $GOOGLE_VISION_API_KEY
       xcode: latest
       ios_signing:
         distribution_type: app_store
@@ -17,6 +15,7 @@ workflows:
       - name: Build IPA
         script: |
           cd namecard_app
+          echo "API KEY LENGTH: ${#GOOGLE_VISION_API_KEY}"
           flutter build ipa \
             --release \
             --dart-define=GOOGLE_VISION_API_KEY=$GOOGLE_VISION_API_KEY \
