@@ -14,9 +14,6 @@ workflows:
       groups:
         - namecard_secrets
     scripts:
-      - name: Get Flutter packages
-        script: |
-          flutter pub get
       - name: Set up code signing
         script: |
           keychain initialize
@@ -27,6 +24,9 @@ workflows:
             --type IOS_DISTRIBUTION
           keychain add-certificates
           xcode-project use-profiles
+      - name: Get Flutter packages
+        script: |
+          flutter pub get
       - name: Build IPA
         script: |
           echo "API KEY LENGTH: ${#GOOGLE_VISION_API_KEY}"
