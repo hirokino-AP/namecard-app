@@ -24,12 +24,8 @@ workflows:
             --create \
             --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
             --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
-            --private-key "@env:APP_STORE_CONNECT_PRIVATE_KEY"
-          app-store-connect create-certificate \
-            --type IOS_DISTRIBUTION \
-            --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
-            --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
-            --private-key "@env:APP_STORE_CONNECT_PRIVATE_KEY"
+            --private-key "@env:APP_STORE_CONNECT_PRIVATE_KEY" \
+            --certificate-key "@env:CERTIFICATE_PRIVATE_KEY"
           keychain add-certificates
           xcode-project use-profiles
       - name: Get Flutter packages
