@@ -5,11 +5,11 @@ workflows:
     environment:
       flutter: stable
       xcode: latest
+      groups:
+        - namecard_secrets
       ios_signing:
         distribution_type: app_store
         bundle_identifier: com.hirokino.namecardapp
-      groups:
-        - namecard_secrets
     scripts:
       - name: Get Flutter packages
         script: |
