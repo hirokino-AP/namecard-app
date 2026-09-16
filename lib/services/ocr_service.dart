@@ -32,7 +32,7 @@ class OcrService {
       final statusCode = response.statusCode;
       final responseBody = response.body.length > 1000 ? response.body.substring(0, 1000) : response.body;
       if (statusCode != 200) {
-        throw Exception('Status: \$statusCode\nBody: \$responseBody');
+        throw Exception('Status: \${response.statusCode}\nBody: \${response.body.substring(0, response.body.length > 500 ? 500 : response.body.length)}');
       }
       final data = jsonDecode(response.body);
       final annotations = data['responses']?[0]?['textAnnotations'] as List?;
