@@ -13,13 +13,18 @@ workflows:
       xcode: latest
       groups:
         - namecard_secrets
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: com.hirokino.namecardapp
     scripts:
       - name: Get Flutter packages
         script: |
           cd namecard_app && flutter pub get
+      - name: Set up code signing
+        script: |
+          keychain initialize
+          app-store-connect fetch-signing-files com.hirokino.namecardapp \
+            --type IOS_APP_STORE \
+            --create
+          keychain add-certificates
+          xcode-project use-profiles
       - name: Build IPA
         script: |
           cd namecard_app
