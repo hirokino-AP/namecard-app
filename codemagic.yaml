@@ -2,6 +2,12 @@ workflows:
   default-workflow:
     name: Default Workflow
     instance_type: mac_mini_m2
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
     environment:
       flutter: stable
       xcode: latest
