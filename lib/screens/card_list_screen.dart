@@ -123,6 +123,56 @@ class _CardListScreenState extends State<CardListScreen> {
     );
   }
 
+  void _showMenu() {
+    showCupertinoModalPopup(
+      context: context,
+      builder: (_) => CupertinoActionSheet(
+        title: const Text('メニュー'),
+        actions: [
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.of(context).pop();
+              _filterBlankKana();
+            },
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(CupertinoIcons.person_badge_minus, size: 20),
+                SizedBox(width: 8),
+                Text('よみがな未入力の名刺を表示'),
+              ],
+            ),
+          ),
+          CupertinoActionSheetAction(
+            isDestructiveAction: true,
+            onPressed: () {
+              Navigator.of(context).pop();
+              _confirmLogout();
+            },
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(CupertinoIcons.square_arrow_right, size: 20, color: CupertinoColors.systemRed),
+                SizedBox(width: 8),
+                Text('ログアウト'),
+              ],
+            ),
+          ),
+        ],
+        cancelButton: CupertinoActionSheetAction(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('キャンセル'),
+        ),
+      ),
+    );
+  }
+
+  void _filterBlankKana() {
+    final uid = context.read<AuthProvider>().uid;
+    context.read<CardProvider>().searchBlankKana(uid);
+    _searchController.clear();
+  }
+
   String _normalizeVoiceInput(String text) {
     String result = text.trim();
     final tokens = result.split(RegExp(r'[\s\u3000]+'));
@@ -316,8 +366,8 @@ class _CardListScreenState extends State<CardListScreen> {
         middle: const Text('名刺管理'),
         leading: CupertinoButton(
           padding: EdgeInsets.zero,
-          onPressed: _confirmLogout,
-          child: const Icon(CupertinoIcons.square_arrow_right, size: 22),
+          onPressed: _showMenu,
+          child: const Icon(CupertinoIcons.line_horizontal_3, size: 26),
         ),
         trailing: Row(mainAxisSize: MainAxisSize.min, children: [
           CupertinoButton(

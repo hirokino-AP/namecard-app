@@ -115,6 +115,17 @@ class CardProvider extends ChangeNotifier {
     }
   }
 
+  Future<void> searchBlankKana(String userId) async {
+    _searchKeyword = 'よみがな未入力';
+    try {
+      _searchResults = await _db.searchBlankKana(userId);
+      _errorMessage = '';
+    } catch (e) {
+      _errorMessage = '検索に失敗しました: $e';
+    }
+    notifyListeners();
+  }
+
   void clearSearch() {
     _searchKeyword = '';
     _searchResults = [];

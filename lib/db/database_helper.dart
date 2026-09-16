@@ -103,6 +103,15 @@ class DatabaseHelper {
   }
 
 
+  Future<List<BusinessCard>> searchBlankKana(String userId) async {
+    final db = await database;
+    final maps = await db.query('business_cards',
+        where: 'user_id = ? AND (name_kana = ? OR name_kana IS NULL)',
+        whereArgs: [userId, ''],
+        orderBy: 'name ASC');
+    return maps.map((m) => BusinessCard.fromMap(m)).toList();
+  }
+
   Future<List<BusinessCard>> searchByNameAndCompany({
     required String userId, required String name, String? company}) async {
     final db = await database;
