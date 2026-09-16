@@ -53,18 +53,96 @@ class OcrService {
   static Map<String, String> _parseLines(List<String> lines) {
     String name = '', company = '', department = '', title = '';
     String email = '', phone = '', mobilePhone = '', fax = '', zipCode = '', address = '';
-    for (final line in lines) {
-      if (RegExp(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}').hasMatch(line)) { email = line.trim(); continue; }
-      if (RegExp(r'[〒]?\d{3}-\d{4}').hasMatch(line)) { zipCode = line.replaceAll('〒', '').trim(); continue; }
-      if (line.contains('FAX') || line.contains('Fax') || line.contains('ファックス')) { fax = line.replaceAll(RegExp(r'[FAXfaxファックス：: ]'), '').trim(); continue; }
-      if (RegExp(r'0[789]0[-\s]?\d{4}[-\s]?\d{4}').hasMatch(line)) { mobilePhone = line.replaceAll(RegExp(r'[^\d\-]'), '').trim(); continue; }
-      if (RegExp(r'0\d{1,4}[-\s]?\d{2,4}[-\s]?\d{4}').hasMatch(line)) { phone = line.replaceAll(RegExp(r'[^\d\-]'), '').trim(); continue; }
-      if (line.contains('都') || line.contains('道') || line.contains('府') || line.contains('県') || line.contains('市') || line.contains('区')) { address = line.trim(); continue; }
-      if (line.contains('株式会社') || line.contains('有限会社') || line.contains('合同会社') || line.contains('省') || line.contains('庁')) { if (company.isEmpty) company = line.trim(); else if (department.isEmpty) department = line.trim(); continue; }
-      if (line.contains('部') || line.contains('課') || line.contains('室') || line.contains('グループ') || line.contains('センター')) { if (department.isEmpty) department = line.trim(); continue; }
-      if (line.contains('長') || line.contains('主任') || line.contains('マネージャー') || line.contains('代表') || line.contains('社長') || line.contains('取締役')) { if (title.isEmpty) title = line.trim(); continue; }
-      if (name.isEmpty && RegExp(r'^[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]{2,6}$').hasMatch(line) && line.length <= 6) { name = line.trim(); continue; }
+
+    for (final rawLine in lines) {
+      final line = rawLine.trim();
+      if (line.isEmpty) continue;
+
+      // メール（ヘッダー除去: e-mail:, Email:, メール: 等）
+      final emailMatch = RegExp(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}').firstMatch(line);
+      if (emailMatch != null) {
+        email = emailMatch.group(0)!;
+        continue;
+      }
+
+      // 郵便番号（〒マーク除去、電話番号との混在対策）
+      if (RegExp(r'[〒ａ]?\d{3}[-－]\d{4}(?!\d)').hasMatch(line) && !line.contains('TEL') && !line.contains('FAX') && !RegExp(r'0\d{9,10}').hasMatch(line)) {
+        final zipMatch = RegExp(r'\d{3}[-－]\d{4}').firstMatch(line);
+        if (zipMatch != null) { zipCode = zipMatch.group(0)!; continue; }
+      }
+
+      // FAX（ヘッダー除去）
+      if (RegExp(r'(?:FAX|Fax|fax|ファックス|ファクス)[：:\s]*').hasMatch(line)) {
+        final cleaned = line.replaceAll(RegExp(r'(?:FAX|Fax|fax|ファックス|ファクス)[：:\s]*'), '').trim();
+        final numMatch = RegExp(r'[\d\-－()（）]+').firstMatch(cleaned);
+        if (numMatch != null && fax.isEmpty) { fax = numMatch.group(0)!.replaceAll(RegExp(r'[^\d\-]'), ''); continue; }
+      }
+
+      // TEL（ヘッダー除去）
+      if (RegExp(r'(?:TEL|Tel|tel|電話)[：:\s]*').hasMatch(line)) {
+        final cleaned = line.replaceAll(RegExp(r'(?:TEL|Tel|tel|電話)[：:\s]*'), '').trim();
+        final numMatch = RegExp(r'0\d[\d\-－]{8,12}').firstMatch(cleaned);
+        if (numMatch != null) {
+          final num = numMatch.group(0)!.replaceAll(RegExp(r'[^\d\-]'), '');
+          if (RegExp(r'^0[789]0').hasMatch(num)) { if (mobilePhone.isEmpty) mobilePhone = num; }
+          else { if (phone.isEmpty) phone = num; }
+          continue;
+        }
+      }
+
+      // 携帯電話（090/080/070）
+      if (RegExp(r'0[789]0[-－\s]?\d{4}[-－\s]?\d{4}').hasMatch(line)) {
+        final numMatch = RegExp(r'0[789]0[-－\s]?\d{4}[-－\s]?\d{4}').firstMatch(line);
+        if (numMatch != null && mobilePhone.isEmpty) {
+          mobilePhone = numMatch.group(0)!.replaceAll(RegExp(r'[^\d\-]'), '');
+          continue;
+        }
+      }
+
+      // 固定電話
+      if (RegExp(r'0\d{1,4}[-－\s]?\d{2,4}[-－\s]?\d{4}').hasMatch(line) && !line.contains('〒') && !RegExp(r'\d{3}[-－]\d{4}(?!\d)').hasMatch(line)) {
+        final numMatch = RegExp(r'0\d{1,4}[-－\s]?\d{2,4}[-－\s]?\d{4}').firstMatch(line);
+        if (numMatch != null && phone.isEmpty) {
+          phone = numMatch.group(0)!.replaceAll(RegExp(r'[^\d\-]'), '');
+          continue;
+        }
+      }
+
+      // 住所
+      if (RegExp(r'[都道府県市区町村]').hasMatch(line)) { if (address.isEmpty) address = line; continue; }
+
+      // 会社名
+      if (RegExp(r'株式会社|有限会社|合同会社|一般社団|公益財団|省$|庁$|機構|センター|協会|組合').hasMatch(line)) {
+        if (company.isEmpty) company = line;
+        else if (department.isEmpty) department = line;
+        continue;
+      }
+
+      // 部署
+      if (RegExp(r'(?:部|課|室|グループ|チーム|センター|局|Division|Dept)').hasMatch(line) && line.length <= 30) {
+        if (department.isEmpty) department = line;
+        continue;
+      }
+
+      // 役職
+      if (RegExp(r'長|主任|マネージャー|ディレクター|代表|社長|取締役|執行役|理事|Chairman|Director|Manager|President').hasMatch(line) && line.length <= 20) {
+        if (title.isEmpty) title = line;
+        continue;
+      }
+
+      // 氏名（漢字2〜4文字 or 姓名スペース区切り）
+      if (name.isEmpty) {
+        // 漢字のみ2〜5文字
+        if (RegExp(r'^[一-鿿]{2,5}$').hasMatch(line)) { name = line; continue; }
+        // 姓名スペース区切り（漢字）
+        if (RegExp(r'^[一-鿿]{1,3}[\s　][一-鿿]{1,3}$').hasMatch(line)) { name = line.replaceAll(RegExp(r'[\s　]'), ''); continue; }
+      }
     }
-    return {'name': name, 'company': company, 'department': department, 'title': title, 'email': email, 'phone': phone, 'mobilePhone': mobilePhone, 'fax': fax, 'zipCode': zipCode, 'address': address};
+
+    return {
+      'name': name, 'company': company, 'department': department, 'title': title,
+      'email': email, 'phone': phone, 'mobilePhone': mobilePhone,
+      'fax': fax, 'zipCode': zipCode, 'address': address,
+    };
   }
 }
