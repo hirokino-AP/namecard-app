@@ -16,10 +16,6 @@ workflows:
           cd namecard_app && flutter pub get
       - name: Build IPA
         script: |
-          BUILD_NUM=$(date +%y%m%d%H%M)
-          echo "BUILD_NUM=$BUILD_NUM"
-          perl -i -pe "s/^version: .*/version: 0.9.0+$BUILD_NUM/" namecard_app/pubspec.yaml
-          cat namecard_app/pubspec.yaml | grep version
           cd namecard_app
           flutter build ipa \
             --release \
