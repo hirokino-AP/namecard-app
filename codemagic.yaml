@@ -32,8 +32,7 @@ workflows:
           echo "API KEY LENGTH: ${#GOOGLE_VISION_API_KEY}"
           flutter build ipa \
             --release \
-            --dart-define=GOOGLE_VISION_API_KEY=$GOOGLE_VISION_API_KEY \
-            --export-options-plist=/Users/builder/export_options.plist
+            --dart-define=GOOGLE_VISION_API_KEY=$GOOGLE_VISION_API_KEY
     artifacts:
       - build/ios/ipa/*.ipa
     publishing:
