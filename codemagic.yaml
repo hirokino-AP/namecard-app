@@ -4,6 +4,8 @@ workflows:
     instance_type: mac_mini_m2
     environment:
       flutter: stable
+      vars:
+        GOOGLE_VISION_API_KEY: $GOOGLE_VISION_API_KEY
       xcode: latest
       ios_signing:
         distribution_type: app_store
@@ -21,6 +23,7 @@ workflows:
           cd namecard_app
           flutter build ipa \
             --release \
+            --dart-define=GOOGLE_VISION_API_KEY=$GOOGLE_VISION_API_KEY \
             --export-options-plist=/Users/builder/export_options.plist
     artifacts:
       - namecard_app/build/ios/ipa/*.ipa
