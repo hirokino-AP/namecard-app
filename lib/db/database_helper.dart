@@ -103,6 +103,23 @@ class DatabaseHelper {
   }
 
 
+
+  Future<Map<String, List<BusinessCard>>> findDuplicates(String userId) async {
+    final db = await database;
+    final maps = await db.query('business_cards',
+        where: "user_id = ? AND name != '' AND company != ''",
+        whereArgs: [userId],
+        orderBy: 'name ASC, company ASC');
+    final cards = maps.map((m) => BusinessCard.fromMap(m)).toList();
+    final Map<String, List<BusinessCard>> groups = {};
+    for (final card in cards) {
+      final key = card.name.trim() + '___' + card.company.trim();
+      groups.putIfAbsent(key, () => []).add(card);
+    }
+    groups.removeWhere((key, list) => list.length < 2);
+    return groups;
+  }
+
   Future<List<BusinessCard>> searchBlankKana(String userId) async {
     final db = await database;
     final maps = await db.query('business_cards',

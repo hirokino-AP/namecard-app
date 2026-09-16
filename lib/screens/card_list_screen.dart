@@ -10,6 +10,7 @@ import '../providers/auth_provider.dart';
 import '../providers/card_provider.dart';
 import 'card_detail_screen.dart';
 import 'card_edit_screen.dart';
+import 'duplicate_screen.dart';
 
 class CardListScreen extends StatefulWidget {
   const CardListScreen({super.key});
@@ -140,6 +141,21 @@ class _CardListScreenState extends State<CardListScreen> {
                 Icon(CupertinoIcons.person_badge_minus, size: 20),
                 SizedBox(width: 8),
                 Text('よみがな未入力の名刺を表示'),
+              ],
+            ),
+          ),
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.of(context).pop();
+              Navigator.of(context).push(CupertinoPageRoute(
+                  builder: (_) => const DuplicateScreen()));
+            },
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(CupertinoIcons.doc_on_doc, size: 20),
+                SizedBox(width: 8),
+                Text('重複名刺チェック'),
               ],
             ),
           ),
