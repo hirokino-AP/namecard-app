@@ -283,16 +283,16 @@ class _OcrReviewScreenState extends State<OcrReviewScreen> {
                     margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      // スキップ項目はグレーアウト、それ以外は白
-                      color: isSkip
-                          ? CupertinoColors.systemGrey6
+                      // 全行同じスタイル（スキップも選択可能・取り消し線なし）
+                      color: _assignments[index] != OcrField.skip
+                          ? CupertinoColors.systemBlue.withValues(alpha: 0.05)
                           : CupertinoColors.systemBackground,
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(
-                        color: isSkip
-                            ? CupertinoColors.systemGrey4
-                            : CupertinoColors.systemBlue.withValues(alpha: 0.3),
-                        width: isSkip ? 1.0 : 1.5,
+                        color: _assignments[index] != OcrField.skip
+                            ? CupertinoColors.systemBlue.withValues(alpha: 0.5)
+                            : CupertinoColors.systemGrey4,
+                        width: 1.0,
                       ),
                     ),
                     child: Column(
@@ -306,15 +306,11 @@ class _OcrReviewScreenState extends State<OcrReviewScreen> {
                                 selectedCompany ?? line,
                                 style: TextStyle(
                                   fontSize: 15,
-                                  // スキップ→グレー、会社候補選択→緑、通常→黒
-                                  color: isSkip
-                                      ? CupertinoColors.systemGrey
-                                      : selectedCompany != null
-                                          ? CupertinoColors.systemGreen
-                                          : CupertinoColors.label,
-                                  decoration: isSkip
-                                      ? TextDecoration.lineThrough
-                                      : TextDecoration.none,
+                                  // 会社候補選択→緑、それ以外→黒（スキップも黒で見やすく）
+                                  color: selectedCompany != null
+                                      ? CupertinoColors.systemGreen
+                                      : CupertinoColors.label,
+                                  decoration: TextDecoration.none,
                                 ),
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
