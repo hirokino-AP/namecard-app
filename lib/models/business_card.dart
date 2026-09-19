@@ -1,5 +1,26 @@
+// ============================================================
 // lib/models/business_card.dart
-// Phase 2対応版 - SQLite + Firebase Auth + プロジェクトコード連携
+//
+// 【役割】
+//   名刺データのモデルクラス。SQLiteのbusiness_cardsテーブルと1対1対応。
+//
+// 【主要メソッド】
+//   fromMap()  : SQLiteのMapからBusinessCardを生成
+//   toMap()    : SQLiteへの保存用Mapに変換
+//   copyWith() : 一部フィールドを変更した新インスタンスを生成
+//   create()   : 新規作成用ファクトリ（createdAt/updatedAt自動設定）
+//
+// 【フィールド一覧】
+//   id, userId, name, nameKana, company, companyKana,
+//   department, title, email, phone, mobilePhone, fax,
+//   zipCode, address, note, imagePath, voiceMemoPath,
+//   projectCodes, createdAt, updatedAt
+//
+// 【注意事項】
+//   - projectCodesはList<String>だがDBにはカンマ区切り文字列で保存
+//   - immutableクラス（constコンストラクタ）
+//   - 等価判定はidのみで行う
+// ============================================================
 
 class BusinessCard {
   final int? id;
@@ -17,6 +38,7 @@ class BusinessCard {
   final String zipCode;
   final String address;
   final String note;
+  final String industry; // 業種（28業種分類）
   final String? imagePath;
   final String? voiceMemoPath;
   final List<String> projectCodes;
@@ -39,6 +61,7 @@ class BusinessCard {
     required this.zipCode,
     required this.address,
     required this.note,
+    required this.industry,
     this.imagePath,
     this.voiceMemoPath,
     required this.projectCodes,
@@ -70,6 +93,7 @@ class BusinessCard {
       zipCode:      map['zip_code']       as String? ?? '',
       address:      map['address']        as String? ?? '',
       note:         map['note']           as String? ?? '',
+      industry:     map['industry']        as String? ?? '',
       imagePath:    map['image_path']     as String?,
       voiceMemoPath:map['voice_memo_path'] as String?,
       projectCodes: _parseCodes(map['project_codes'] as String?),
@@ -95,6 +119,7 @@ class BusinessCard {
       'zip_code':        zipCode,
       'address':         address,
       'note':            note,
+      'industry':        industry,
       'image_path':      imagePath,
       'voice_memo_path': voiceMemoPath,
       'project_codes':   _encodeCodes(projectCodes),
@@ -108,6 +133,7 @@ class BusinessCard {
     String? company, String? companyKana, String? department,
     String? title, String? email, String? phone, String? mobilePhone,
     String? fax, String? zipCode, String? address, String? note,
+    String? industry,
     String? imagePath, String? voiceMemoPath, List<String>? projectCodes,
     DateTime? createdAt, DateTime? updatedAt,
   }) {
@@ -127,6 +153,7 @@ class BusinessCard {
       zipCode:       zipCode       ?? this.zipCode,
       address:       address       ?? this.address,
       note:          note          ?? this.note,
+      industry:      industry      ?? this.industry,
       imagePath:     imagePath     ?? this.imagePath,
       voiceMemoPath: voiceMemoPath ?? this.voiceMemoPath,
       projectCodes:  projectCodes  ?? this.projectCodes,
@@ -141,6 +168,7 @@ class BusinessCard {
     String department='', String title='', String email='',
     String phone='', String mobilePhone='', String fax='',
     String zipCode='', String address='', String note='',
+    String industry='',
     String? imagePath, String? voiceMemoPath,
     List<String> projectCodes = const [],
   }) {
@@ -149,7 +177,7 @@ class BusinessCard {
       userId:userId, name:name, nameKana:nameKana, company:company,
       companyKana:companyKana, department:department, title:title,
       email:email, phone:phone, mobilePhone:mobilePhone, fax:fax,
-      zipCode:zipCode, address:address, note:note, imagePath:imagePath,
+      zipCode:zipCode, address:address, note:note, industry:industry, imagePath:imagePath,
       voiceMemoPath:voiceMemoPath, projectCodes:projectCodes,
       createdAt:now, updatedAt:now,
     );

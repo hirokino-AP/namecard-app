@@ -1,4 +1,5 @@
 // lib/screens/card_detail_screen.dart
+import 'dart:io';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart' show CircleAvatar;
 import 'package:provider/provider.dart';
@@ -8,9 +9,16 @@ import '../models/business_card.dart';
 import '../providers/card_provider.dart';
 import 'card_edit_screen.dart';
 
-class CardDetailScreen extends StatelessWidget {
+class CardDetailScreen extends StatefulWidget {
   final BusinessCard card;
   const CardDetailScreen({super.key, required this.card});
+
+  @override
+  State<CardDetailScreen> createState() => _CardDetailScreenState();
+}
+
+class _CardDetailScreenState extends State<CardDetailScreen> {
+  BusinessCard get card => widget.card;
 
   Future<void> _callPhone(BuildContext context, String phone) async {
     final uri = Uri(scheme: 'tel', path: phone);
@@ -84,6 +92,27 @@ class CardDetailScreen extends StatelessWidget {
                 onPressed: () => Navigator.of(context).pop(), child: const Text('OK'))]));
   }
 
+  // 画像フルスクリーン表示（ズーム可能）
+  void _showImageFullScreen(BuildContext context) {
+    if (card.imagePath == null) return;
+    showCupertinoModalPopup(
+      context: context,
+      builder: (_) => GestureDetector(
+        onTap: () => Navigator.of(context).pop(),
+        child: Container(
+          color: CupertinoColors.black,
+          child: Center(
+            child: InteractiveViewer(
+              minScale: 0.5,
+              maxScale: 5.0,
+              child: Image.file(File(card.imagePath!)),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildInfoTile({required IconData icon, required String label,
       required String value, VoidCallback? onTap}) {
     if (value.isEmpty) return const SizedBox.shrink();
@@ -114,6 +143,45 @@ class CardDetailScreen extends StatelessWidget {
         ]),
       ),
       child: SafeArea(child: ListView(children: [
+        // 名刺画像（保存されている場合）
+        if (card.imagePath != null && File(card.imagePath!).existsSync())
+          GestureDetector(
+            onTap: () => _showImageFullScreen(context),
+            child: Container(
+              width: double.infinity,
+              height: 200,
+              color: CupertinoColors.black,
+              child: Stack(
+                children: [
+                  Center(
+                    child: InteractiveViewer(
+                      minScale: 0.5,
+                      maxScale: 5.0,
+                      child: Image.file(
+                        File(card.imagePath!),
+                        fit: BoxFit.contain,
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    bottom: 8, right: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: CupertinoColors.black.withOpacity(0.5),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Row(children: [
+                        Icon(CupertinoIcons.zoom_in, size: 12, color: CupertinoColors.white),
+                        SizedBox(width: 4),
+                        Text('タップでズーム', style: TextStyle(fontSize: 11, color: CupertinoColors.white)),
+                      ]),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         Container(
           padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
           color: CupertinoColors.systemBackground,

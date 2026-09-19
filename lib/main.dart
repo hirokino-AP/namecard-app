@@ -1,3 +1,23 @@
+// ============================================================
+// lib/main.dart
+//
+// 【役割】
+//   アプリのエントリポイント。以下を担当：
+//   1. Firebase初期化
+//   2. Provider設定（AuthProvider・CardProvider）
+//   3. URLスキーム処理（namecard://call?name=&company=&todoId=）
+//   4. 認証状態に応じた画面ルーティング
+//
+// 【画面ルーティング】
+//   AuthStatus.unknown        → ローディング画面
+//   AuthStatus.authenticated  → CardListScreen（名刺一覧）
+//   AuthStatus.unauthenticated→ LoginScreen（ログイン）
+//
+// 【URLスキーム】
+//   外部アプリ（Todoアプリ）からの呼び出しを処理
+//   namecard://call?name=山田太郎&company=株式会社XX&todoId=123
+//   → 名刺検索 → CallResultScreenに遷移
+// ============================================================
 // lib/main.dart
 import 'package:flutter/cupertino.dart';
 import 'package:provider/provider.dart';

@@ -1,3 +1,30 @@
+// ============================================================
+// lib/db/database_helper.dart
+//
+// 【役割】
+//   SQLiteデータベース（app_namecard.db）の全CRUD操作を管理。
+//   シングルトンパターンで実装。
+//
+// 【DBファイル】
+//   - app_namecard.db: アプリ内部ストレージ（iTunes File Sharing非公開）
+//   - namecard.db: iTunes経由で転送するインポート用ファイル
+//
+// 【主要メソッド一覧】
+//   insert/update/delete     : 単件CRUD
+//   insertAll                : 一括挿入（トランザクション）
+//   getAllByUser             : 全件取得（よみがな順）
+//   search                  : キーワード検索（複数フィールド対象）
+//   getAllCompanyNames       : 会社名一覧取得（OCR候補表示用）
+//   getCompanyKana          : 会社名からよみがな取得（OCR自動補完用）
+//   findDuplicates          : 重複チェック
+//   importFromItunes        : iTunes転送DBをインポート
+//   importFromPath          : パス指定DBをインポート
+//   importFromJson          : JSON文字列からインポート
+//
+// 【注意事項】
+//   - sqfliteのsandbox制約のため、外部DBはtmpディレクトリ経由でopen
+//   - project_codesはカンマ区切り文字列で保存
+// ============================================================
 // lib/db/database_helper.dart
 import 'dart:io';
 import 'dart:convert';
@@ -21,7 +48,20 @@ class DatabaseHelper {
   Future<Database> _initDB() async {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, 'app_namecard.db');
-    return await openDatabase(path, version: 1, onCreate: _onCreate);
+    return await openDatabase(
+      path,
+      version: 2,
+      onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
+    );
+  }
+
+  // DBバージョンアップ時のマイグレーション
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      // v1→v2: industryフィールド追加
+      await db.execute("ALTER TABLE business_cards ADD COLUMN industry TEXT NOT NULL DEFAULT ''");
+    }
   }
 
   Future<void> _onCreate(Database db, int version) async {
@@ -42,6 +82,7 @@ class DatabaseHelper {
         zip_code        TEXT NOT NULL DEFAULT '',
         address         TEXT NOT NULL DEFAULT '',
         note            TEXT NOT NULL DEFAULT '',
+        industry        TEXT NOT NULL DEFAULT '',
         image_path      TEXT,
         voice_memo_path TEXT,
         project_codes   TEXT NOT NULL DEFAULT '',

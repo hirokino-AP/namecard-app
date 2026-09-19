@@ -1,6 +1,35 @@
+// ============================================================
+// lib/providers/card_provider.dart
+//
+// 【役割】
+//   名刺データのビジネスロジックを管理するProvider。
+//   UIとDBの橋渡し役。ChangeNotifierでUI変更を通知。
+//
+// 【状態管理】
+//   _cards        : 全名刺リスト
+//   _searchResults: 検索結果リスト
+//   _isLoading    : ローディング状態
+//   _errorMessage : エラーメッセージ
+//   _searchKeyword: 現在の検索キーワード
+//
+// 【主要メソッド一覧】
+//   loadCards       : 全件読み込み
+//   addCard         : 新規追加
+//   updateCard      : 更新
+//   deleteCard      : 削除
+//   search          : キーワード検索
+//   searchForCall   : Todo連携用名前・会社検索
+//   importFromCsv   : CSVインポート（UIDocumentPicker経由）
+//   importFromPath  : DBインポート（パス指定）
+//   importFromJson  : DBインポート（JSON文字列）
+//   deleteAllCards  : 全件削除
+//
+// 【注意事項】
+//   - file_pickerパッケージは使用禁止（セキュリティ問題）
+//   - CSVインポートはUIDocumentPicker経由でパスを受け取る
+//   - displayCardsプロパティで検索中/非検索中を自動切替
+// ============================================================
 import 'dart:io';
-import 'package:csv/csv.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import '../models/business_card.dart';
 import '../db/database_helper.dart';
@@ -163,19 +192,22 @@ class CardProvider extends ChangeNotifier {
     return count;
   }
 
-  Future<Map<String, int>> importFromCsv(String userId) async {
+  // CSVファイルパスを受け取ってインポート（UIDocumentPicker経由で呼ぶ）
+  Future<Map<String, int>> importFromCsv(String userId, {String? filePath}) async {
     int success = 0;
     int skip = 0;
     int error = 0;
     try {
-      final files = await FilePicker.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['csv'],
-      );
-      if (files.isEmpty) return {'success': 0, 'skip': 0, 'error': 0, 'cancelled': 1};
-      final file = File(files.first.path!);
+      if (filePath == null || filePath.isEmpty) {
+        return {'success': 0, 'skip': 0, 'error': 0, 'cancelled': 1};
+      }
+      final file = File(filePath);
+      if (!await file.exists()) {
+        return {'success': 0, 'skip': 0, 'error': 0, 'cancelled': 1};
+      }
       final rawContent = await file.readAsString();
-      final rows = Csv().decode(rawContent);
+      // 簡易CSVパース（カンマ区切り、ダブルクォート対応）
+      final rows = _parseCsv(rawContent);
       if (rows.isEmpty) return {'success': 0, 'skip': 0, 'error': 0};
       final dataRows = rows.skip(1).toList();
       for (final row in dataRows) {
@@ -195,6 +227,7 @@ class CardProvider extends ChangeNotifier {
             mobilePhone: v(8),
             fax: v(9),
             note: v(10),
+            industry: '',
             zipCode: v(11),
             address: v(12),
             projectCodes: [],
@@ -238,6 +271,32 @@ class CardProvider extends ChangeNotifier {
   void clearError() {
     _errorMessage = '';
     notifyListeners();
+  }
+
+  // 簡易CSVパーサー（外部パッケージ不要）
+  List<List<String>> _parseCsv(String content) {
+    final lines = content.replaceAll('\r\n', '\n').replaceAll('\r', '\n').split('\n');
+    final result = <List<String>>[];
+    for (final line in lines) {
+      if (line.trim().isEmpty) continue;
+      final fields = <String>[];
+      bool inQuotes = false;
+      final current = StringBuffer();
+      for (int i = 0; i < line.length; i++) {
+        final ch = line[i];
+        if (ch == '"') {
+          inQuotes = !inQuotes;
+        } else if (ch == ',' && !inQuotes) {
+          fields.add(current.toString().trim());
+          current.clear();
+        } else {
+          current.write(ch);
+        }
+      }
+      fields.add(current.toString().trim());
+      result.add(fields);
+    }
+    return result;
   }
 
   void _setLoading(bool value) {

@@ -5,7 +5,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter/material.dart' show CircleAvatar, RefreshIndicator, Scrollbar, Theme, ThemeData, ScrollbarThemeData, WidgetStateProperty;
 import 'package:provider/provider.dart';
 import 'package:speech_to_text/speech_to_text.dart';
+import 'dart:io';
 import '../models/business_card.dart';
+import '../services/excel_service.dart';
+import '../services/settings_service.dart';
+import 'settings_screen.dart';
 import '../providers/auth_provider.dart';
 import '../providers/card_provider.dart';
 import 'card_detail_screen.dart';
@@ -24,6 +28,8 @@ class _CardListScreenState extends State<CardListScreen> {
   final _speech = SpeechToText();
   bool _isListening = false;
   bool _speechAvailable = false;
+  int _displayCount = 0;       // 表示件数（0=制限なし）
+  double _fontSize = 14.0;     // フォントサイズ
   Timer? _debounce;
   List<String> _departmentDict = [];
 
@@ -47,6 +53,14 @@ class _CardListScreenState extends State<CardListScreen> {
   }
 
   Future<void> _initSpeech() async {
+    // 設定値を読み込む
+    final displayCount = await SettingsService.getDisplayCount();
+    final fontSize = await SettingsService.getFontSize();
+    setState(() {
+      _displayCount = displayCount;
+      _fontSize = fontSize;
+    });
+
     final available = await _speech.initialize(
       onError: (e) => setState(() => _isListening = false),
       onStatus: (s) {
@@ -145,6 +159,20 @@ class _CardListScreenState extends State<CardListScreen> {
             ),
           ),
           CupertinoActionSheetAction(
+            onPressed: () async {
+              Navigator.of(context).pop();
+              await _exportToExcel();
+            },
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(CupertinoIcons.table, size: 20),
+                SizedBox(width: 8),
+                Text('Excelで出力・共有'),
+              ],
+            ),
+          ),
+          CupertinoActionSheetAction(
             onPressed: () {
               Navigator.of(context).pop();
               Navigator.of(context).push(CupertinoPageRoute(
@@ -156,6 +184,21 @@ class _CardListScreenState extends State<CardListScreen> {
                 Icon(CupertinoIcons.doc_on_doc, size: 20),
                 SizedBox(width: 8),
                 Text('重複名刺チェック'),
+              ],
+            ),
+          ),
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.of(context).pop();
+              Navigator.of(context).push(CupertinoPageRoute(
+                  builder: (_) => const SettingsScreen()));
+            },
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(CupertinoIcons.settings, size: 20),
+                SizedBox(width: 8),
+                Text('設定'),
               ],
             ),
           ),
@@ -291,17 +334,30 @@ class _CardListScreenState extends State<CardListScreen> {
     _latestWords = '';
     setState(() => _isListening = true);
 
+    // 設定から待機時間を取得
+    final delaySeconds = await SettingsService.getVoiceSearchDelay();
+
     await _speech.listen(
-      listenOptions: SpeechListenOptions(localeId: 'ja_JP'),
+      listenOptions: SpeechListenOptions(
+        localeId: 'ja_JP',
+        pauseFor: Duration(seconds: delaySeconds.clamp(1, 10)),
+        listenMode: ListenMode.search,
+      ),
       onResult: (result) {
         _latestWords = result.recognizedWords;
-        if (result.finalResult) {
-          // 音声終了を検知 → 2秒待って検索
+        if (result.finalResult && _latestWords.isNotEmpty) {
           _silenceTimer?.cancel();
-          _silenceTimer = Timer(const Duration(seconds: 2), () {
+          if (delaySeconds <= 0) {
+            // 0秒以下は即時検索
             _applyVoiceResult(_latestWords);
-          });
+          } else {
+            // 設定した秒数待機してから検索
+            _silenceTimer = Timer(Duration(seconds: delaySeconds), () {
+              _applyVoiceResult(_latestWords);
+            });
+          }
         }
+
       },
     );
   }
@@ -371,24 +427,57 @@ class _CardListScreenState extends State<CardListScreen> {
   }
 
   Future<void> _importCsv() async {
+    // UIDocumentPicker（iOSネイティブ）でCSVファイルを選択
+    const channel = MethodChannel('com.hirokino.namecardapp/document_picker');
+    final String? filePath = await channel.invokeMethod('pickCsv');
+    if (!mounted) return;
+    if (filePath == null) return; // キャンセル
+
     final uid = context.read<AuthProvider>().uid;
-    final result = await context.read<CardProvider>().importFromCsv(uid);
+    final result = await context.read<CardProvider>().importFromCsv(uid, filePath: filePath);
     if (!mounted) return;
     if (result['cancelled'] == 1) return;
     showCupertinoDialog(
       context: context,
       builder: (_) => CupertinoAlertDialog(
-        title: const Text('インポート完了'),
+        title: const Text('CSVインポート完了'),
         content: Text("成功: ${result['success']}件\nスキップ: ${result['skip']}件\nエラー: ${result['error']}件"),
         actions: [
           CupertinoDialogAction(
             isDefaultAction: true,
-            onPressed: () => Navigator.of(context).pop(),
+            onPressed: () { Navigator.of(context).pop(); _loadCards(); },
             child: const Text('OK'),
           ),
         ],
       ),
     );
+  }
+
+  // Excel出力してShareSheetで共有
+  Future<void> _exportToExcel() async {
+    final cards = context.read<CardProvider>().cards;
+    if (cards.isEmpty) {
+      _showAlert('データなし', '出力する名刺データがありません。');
+      return;
+    }
+    try {
+      showCupertinoDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const CupertinoAlertDialog(
+          title: Text('Excel出力中'),
+          content: Padding(
+            padding: EdgeInsets.only(top: 16),
+            child: CupertinoActivityIndicator(),
+          ),
+        ),
+      );
+      await ExcelService.exportAndShare(cards);
+      if (mounted) Navigator.of(context).pop();
+    } catch (e) {
+      if (mounted) Navigator.of(context).pop();
+      if (mounted) _showAlert('エラー', 'Excel出力に失敗しました: \$e');
+    }
   }
 
   void _confirmLogout() {
@@ -436,19 +525,30 @@ class _CardListScreenState extends State<CardListScreen> {
   Widget _buildCardItem(BusinessCard card) {
     return CupertinoListTile(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      leading: CircleAvatar(
-        backgroundColor: CupertinoColors.systemBlue.withValues(alpha: 0.15),
-        child: Text(
-          card.name.isNotEmpty ? card.name[0] : '?',
-          style: const TextStyle(color: CupertinoColors.systemBlue, fontWeight: FontWeight.bold),
-        ),
-      ),
+      leading: card.imagePath != null && File(card.imagePath!).existsSync()
+          ? ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.file(
+                File(card.imagePath!),
+                width: 44,
+                height: 44,
+                fit: BoxFit.cover,
+              ),
+            )
+          : CircleAvatar(
+              backgroundColor: CupertinoColors.systemBlue.withValues(alpha: 0.15),
+              child: Text(
+                card.name.isNotEmpty ? card.name[0] : '?',
+                style: const TextStyle(
+                    color: CupertinoColors.systemBlue, fontWeight: FontWeight.bold),
+              ),
+            ),
       title: Text(card.name,
-          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+          style: TextStyle(fontWeight: FontWeight.w600, fontSize: _fontSize + 2)),
       subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         if (card.company.isNotEmpty)
           Text(card.company,
-              style: const TextStyle(color: CupertinoColors.secondaryLabel, fontSize: 13)),
+              style: TextStyle(color: CupertinoColors.secondaryLabel, fontSize: _fontSize - 1)),
         if (card.department.isNotEmpty)
           Text(card.department,
               style: const TextStyle(color: CupertinoColors.tertiaryLabel, fontSize: 12),
@@ -469,7 +569,11 @@ class _CardListScreenState extends State<CardListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final cards = context.watch<CardProvider>().displayCards;
+    final allCards = context.watch<CardProvider>().displayCards;
+    // 表示件数制限を適用
+    final cards = _displayCount > 0 && allCards.length > _displayCount
+        ? allCards.sublist(0, _displayCount)
+        : allCards;
     final isLoading = context.watch<CardProvider>().isLoading;
     final isSearching = context.watch<CardProvider>().isSearching;
     final total = context.watch<CardProvider>().cards.length;

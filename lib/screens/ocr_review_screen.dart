@@ -7,19 +7,26 @@ import '../providers/card_provider.dart';
 import '../db/database_helper.dart';
 
 enum OcrField {
+  skip('－（対象外）'),
   name('氏名'),
   nameKana('氏名よみがな'),
   company('会社名'),
   companyKana('会社名よみがな'),
-  department('部署名'),
+  department1('部署名①'),
+  department2('部署名②'),
+  department3('部署名③'),
+  department4('部署名④'),
+  title1('役職①'),
+  title2('役職②'),
+  title3('役職③'),
+  title4('役職④'),
   phone('電話'),
   mobilePhone('携帯'),
   fax('FAX'),
   zipCode('郵便番号'),
   address('住所'),
   projectCodes('関連'),
-  note('備考'),
-  skip('スキップ');
+  note('備考');
 
   final String label;
   const OcrField(this.label);
@@ -125,7 +132,8 @@ class _OcrReviewScreenState extends State<OcrReviewScreen> {
     if (result['nameKana'] == line) return OcrField.nameKana;
     if (result['company'] == line) return OcrField.company;
     if (result['companyKana'] == line) return OcrField.companyKana;
-    if (result['department'] == line) return OcrField.department;
+    if (result['department'] == line) return OcrField.department1;
+    if (result['title'] == line) return OcrField.title1;
     if (result['phone'] == line) return OcrField.phone;
     if (result['mobilePhone'] == line) return OcrField.mobilePhone;
     if (result['fax'] == line) return OcrField.fax;
@@ -139,20 +147,49 @@ class _OcrReviewScreenState extends State<OcrReviewScreen> {
   Map<String, String> _buildResult() {
     final result = <String, String>{
       'name': '', 'nameKana': '', 'company': '', 'companyKana': _autoCompanyKana,
-      'department': '', 'phone': '', 'mobilePhone': '', 'fax': '',
+      'department': '', 'title': '', 'phone': '', 'mobilePhone': '', 'fax': '',
       'zipCode': '', 'address': '', 'projectCodes': '', 'note': '',
     };
+    // 部署・役職の連結用
+    final deptParts = <String>[];
+    final titleParts = <String>[];
+
     for (int i = 0; i < widget.lines.length; i++) {
       final field = _assignments[i];
       if (field == OcrField.skip) continue;
-      final key = field.name;
       final value = _selectedCompany[i] ?? widget.lines[i];
-      if (result[key]!.isEmpty) {
-        result[key] = value;
-      } else {
-        result[key] = '${result[key]} $value';
+
+      // 部署名①〜④は連結
+      if (field == OcrField.department1 || field == OcrField.department2 ||
+          field == OcrField.department3 || field == OcrField.department4) {
+        deptParts.add(value);
+        continue;
       }
+      // 役職①〜④は連結
+      if (field == OcrField.title1 || field == OcrField.title2 ||
+          field == OcrField.title3 || field == OcrField.title4) {
+        titleParts.add(value);
+        continue;
+      }
+
+      // その他フィールド
+      final key = field == OcrField.name ? 'name'
+          : field == OcrField.nameKana ? 'nameKana'
+          : field == OcrField.company ? 'company'
+          : field == OcrField.companyKana ? 'companyKana'
+          : field == OcrField.phone ? 'phone'
+          : field == OcrField.mobilePhone ? 'mobilePhone'
+          : field == OcrField.fax ? 'fax'
+          : field == OcrField.zipCode ? 'zipCode'
+          : field == OcrField.address ? 'address'
+          : field == OcrField.projectCodes ? 'projectCodes'
+          : field == OcrField.note ? 'note' : '';
+      if (key.isNotEmpty && result[key]!.isEmpty) result[key] = value;
     }
+
+    // 部署・役職を連結してセット
+    if (deptParts.isNotEmpty) result['department'] = deptParts.join('');
+    if (titleParts.isNotEmpty) result['title'] = titleParts.join('　');
     return result;
   }
 
@@ -240,14 +277,23 @@ class _OcrReviewScreenState extends State<OcrReviewScreen> {
                   final line = widget.lines[index];
                   final selectedCompany = _selectedCompany[index];
                   final hasCandidates = _companyCandidates.containsKey(index);
+                  final isSkip = _assignments[index] == OcrField.skip;
 
                   return Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                    padding: const EdgeInsets.all(10),
+                    margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: CupertinoColors.systemBackground,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: CupertinoColors.systemGrey5),
+                      // スキップ項目はグレーアウト、それ以外は白
+                      color: isSkip
+                          ? CupertinoColors.systemGrey6
+                          : CupertinoColors.systemBackground,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: isSkip
+                            ? CupertinoColors.systemGrey4
+                            : CupertinoColors.systemBlue.withValues(alpha: 0.3),
+                        width: isSkip ? 1.0 : 1.5,
+                      ),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -259,10 +305,16 @@ class _OcrReviewScreenState extends State<OcrReviewScreen> {
                               child: Text(
                                 selectedCompany ?? line,
                                 style: TextStyle(
-                                  fontSize: 14,
-                                  color: selectedCompany != null
-                                      ? CupertinoColors.systemGreen
-                                      : CupertinoColors.label,
+                                  fontSize: 15,
+                                  // スキップ→グレー、会社候補選択→緑、通常→黒
+                                  color: isSkip
+                                      ? CupertinoColors.systemGrey
+                                      : selectedCompany != null
+                                          ? CupertinoColors.systemGreen
+                                          : CupertinoColors.label,
+                                  decoration: isSkip
+                                      ? TextDecoration.lineThrough
+                                      : TextDecoration.none,
                                 ),
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
@@ -272,14 +324,14 @@ class _OcrReviewScreenState extends State<OcrReviewScreen> {
                             Expanded(
                               flex: 2,
                               child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8),
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                 decoration: BoxDecoration(
-                                  color: _assignments[index] == OcrField.skip
-                                      ? CupertinoColors.systemGrey6
+                                  color: isSkip
+                                      ? CupertinoColors.systemGrey5
                                       : CupertinoColors.systemBlue.withValues(alpha: 0.1),
                                   borderRadius: BorderRadius.circular(8),
                                   border: Border.all(
-                                    color: _assignments[index] == OcrField.skip
+                                    color: isSkip
                                         ? CupertinoColors.systemGrey4
                                         : CupertinoColors.systemBlue,
                                   ),
