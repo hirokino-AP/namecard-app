@@ -7,6 +7,7 @@ import '../models/business_card.dart';
 import '../providers/auth_provider.dart';
 import '../providers/card_provider.dart';
 import '../services/ocr_service.dart';
+import 'ocr_review_screen.dart';
 
 class CardEditScreen extends StatefulWidget {
   final BusinessCard? card;
@@ -96,10 +97,20 @@ class _CardEditScreenState extends State<CardEditScreen> {
     try {
       final file = File(picked.path);
       final result = await OcrService.recognizeBusinessCard(file);
-      _applyOcrResult(result);
+      final lines = OcrService.lastLines;
+      if (!mounted) return;
+      setState(() => _isOcrLoading = false);
+      // OcrReviewScreenに遷移
+      final reviewed = await Navigator.of(context).push<Map<String, String>>(
+        CupertinoPageRoute(
+          builder: (_) => OcrReviewScreen(lines: lines, autoResult: result, userId: context.read<AuthProvider>().uid),
+        ),
+      );
+      if (reviewed != null && mounted) {
+        _applyOcrResult(reviewed);
+      }
     } catch (e) {
       if (mounted) _showAlert('エラー', 'OCR読み取りに失敗しました: $e');
-    } finally {
       if (mounted) setState(() => _isOcrLoading = false);
     }
   }

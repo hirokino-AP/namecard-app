@@ -279,33 +279,49 @@ class _CardListScreenState extends State<CardListScreen> {
     return normalized.join(' ');
   }
 
+  Timer? _silenceTimer;
+  String _latestWords = '';
+
   Future<void> _startListening() async {
     if (!_speechAvailable) {
       _showAlert('音声認識が使えません', 'マイクのアクセスを許可してください。');
       return;
     }
+    _silenceTimer?.cancel();
+    _latestWords = '';
     setState(() => _isListening = true);
+
     await _speech.listen(
       listenOptions: SpeechListenOptions(localeId: 'ja_JP'),
       onResult: (result) {
+        _latestWords = result.recognizedWords;
         if (result.finalResult) {
-          final raw = result.recognizedWords;
-          final normalized = _normalizeVoiceInput(raw);
-          _searchController.text = normalized;
-          _onSearchChanged(normalized);
-          setState(() => _isListening = false);
-          // 部署名候補提示
-          final tokens = normalized.split(RegExp(r'[\s\u3000]+')).where((t) => t.isNotEmpty).toList();
-          for (final tok in tokens) {
-            final candidates = _findSimilarDepts(tok);
-            if (candidates.isNotEmpty && !_departmentDict.contains(tok)) {
-              _showSuggestions(candidates, tok);
-              break;
-            }
-          }
+          // 音声終了を検知 → 2秒待って検索
+          _silenceTimer?.cancel();
+          _silenceTimer = Timer(const Duration(seconds: 2), () {
+            _applyVoiceResult(_latestWords);
+          });
         }
       },
     );
+  }
+
+  void _applyVoiceResult(String raw) {
+    if (!mounted) return;
+    _speech.stop();
+    final normalized = _normalizeVoiceInput(raw);
+    _searchController.text = normalized;
+    _onSearchChanged(normalized);
+    setState(() => _isListening = false);
+    // 部署名候補提示
+    final tokens = normalized.split(RegExp(r'[\s\u3000]+')).where((t) => t.isNotEmpty).toList();
+    for (final tok in tokens) {
+      final candidates = _findSimilarDepts(tok);
+      if (candidates.isNotEmpty && !_departmentDict.contains(tok)) {
+        _showSuggestions(candidates, tok);
+        break;
+      }
+    }
   }
 
   Future<void> _stopListening() async {

@@ -104,6 +104,27 @@ class DatabaseHelper {
 
 
 
+  Future<List<String>> getAllCompanyNames(String userId) async {
+    final db = await database;
+    final maps = await db.rawQuery(
+      "SELECT DISTINCT company FROM business_cards WHERE user_id = ? AND company != '' ORDER BY company ASC",
+      [userId],
+    );
+    return maps.map((m) => m['company'] as String).toList();
+  }
+
+  // 会社名からよみがなを取得
+  Future<String> getCompanyKana(String userId, String companyName) async {
+    final db = await database;
+    final maps = await db.rawQuery(
+      "SELECT company_kana FROM business_cards WHERE user_id = ? AND company = ? AND company_kana != '' LIMIT 1",
+      [userId, companyName],
+    );
+    if (maps.isEmpty) return '';
+    return maps[0]['company_kana'] as String? ?? '';
+
+  }
+
   Future<Map<String, List<BusinessCard>>> findDuplicates(String userId) async {
     final db = await database;
     final maps = await db.query('business_cards',

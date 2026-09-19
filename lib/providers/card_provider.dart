@@ -115,6 +115,10 @@ class CardProvider extends ChangeNotifier {
     }
   }
 
+  Future<List<String>> getAllCompanyNames(String userId) async {
+    return await _db.getAllCompanyNames(userId);
+  }
+
   Future<void> searchBlankKana(String userId) async {
     _searchKeyword = 'よみがな未入力';
     try {
