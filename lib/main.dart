@@ -25,6 +25,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'providers/auth_provider.dart';
 import 'providers/card_provider.dart';
 import 'services/url_scheme_service.dart';
+import 'services/settings_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/card_list_screen.dart';
 import 'screens/call_result_screen.dart';
@@ -54,11 +55,29 @@ class NamecardApp extends StatefulWidget {
 
 class _NamecardAppState extends State<NamecardApp> {
   final _navigatorKey = GlobalKey<NavigatorState>();
+  Color _themeColor = const Color(0xFF185FA5); // デフォルト：Navy Blue
 
   @override
   void initState() {
     super.initState();
     _initUrlScheme();
+    _loadThemeColor();
+  }
+
+  // 設定からテーマカラーを読み込む
+  Future<void> _loadThemeColor() async {
+    final colorHex = await SettingsService.getThemeColor();
+    final colorValue = SettingsService.colorFromHex(colorHex);
+    setState(() => _themeColor = Color(colorValue));
+  }
+
+  // テーマカラーの明度から文字色を決定（暗色→白、明色→黒）
+  Color get _contrastColor {
+    final r = _themeColor.red;
+    final g = _themeColor.green;
+    final b = _themeColor.blue;
+    final luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return luminance > 0.5 ? CupertinoColors.black : CupertinoColors.white;
   }
 
   void _initUrlScheme() {
@@ -124,8 +143,11 @@ class _NamecardAppState extends State<NamecardApp> {
     return CupertinoApp(
       navigatorKey: _navigatorKey,
       title: '名刺管理',
-      theme: const CupertinoThemeData(
-          primaryColor: CupertinoColors.systemBlue, brightness: Brightness.light),
+      theme: CupertinoThemeData(
+          primaryColor: _themeColor,
+          barBackgroundColor: _themeColor,
+          primaryContrastingColor: _contrastColor,
+          brightness: Brightness.light),
       home: const _RootScreen(),
       debugShowCheckedModeBanner: false,
     );

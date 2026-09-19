@@ -1,6 +1,5 @@
 // lib/screens/ocr_review_screen.dart
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/material.dart' show DropdownButton, DropdownMenuItem;
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../providers/card_provider.dart';
@@ -197,6 +196,40 @@ class _OcrReviewScreenState extends State<OcrReviewScreen> {
   final Map<int, String> _selectedCompany = {};
   String _autoCompanyKana = ''; // 会社名候補選択時に自動取得したよみがな
 
+  // フィールド選択ピッカー（ActionSheet）
+  void _showFieldPicker(int index) {
+    showCupertinoModalPopup(
+      context: context,
+      builder: (_) => CupertinoActionSheet(
+        title: const Text('項目を選択'),
+        message: Text('「${widget.lines[index]}」のフィールドを選択してください'),
+        actions: OcrField.values.map((field) =>
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.of(context).pop();
+              setState(() => _assignments[index] = field);
+            },
+            child: Text(
+              field.label,
+              style: TextStyle(
+                color: _assignments[index] == field
+                    ? CupertinoColors.systemBlue
+                    : CupertinoColors.label,
+                fontWeight: _assignments[index] == field
+                    ? FontWeight.bold
+                    : FontWeight.normal,
+              ),
+            ),
+          ),
+        ).toList(),
+        cancelButton: CupertinoActionSheetAction(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('キャンセル'),
+        ),
+      ),
+    );
+  }
+
   void _showCompanyCandidates(int index) {
     final candidates = _companyCandidates[index] ?? [];
     if (candidates.isEmpty) return;
@@ -277,8 +310,6 @@ class _OcrReviewScreenState extends State<OcrReviewScreen> {
                   final line = widget.lines[index];
                   final selectedCompany = _selectedCompany[index];
                   final hasCandidates = _companyCandidates.containsKey(index);
-                  final isSkip = _assignments[index] == OcrField.skip;
-
                   return Container(
                     margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     padding: const EdgeInsets.all(12),
@@ -319,44 +350,31 @@ class _OcrReviewScreenState extends State<OcrReviewScreen> {
                             const SizedBox(width: 8),
                             Expanded(
                               flex: 2,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: isSkip
-                                      ? CupertinoColors.systemGrey5
-                                      : CupertinoColors.systemBlue.withValues(alpha: 0.1),
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(
-                                    color: isSkip
-                                        ? CupertinoColors.systemGrey4
-                                        : CupertinoColors.systemBlue,
-                                  ),
-                                ),
-                                child: DropdownButton<OcrField>(
-                                  value: _assignments[index],
-                                  isExpanded: true,
-                                  underline: const SizedBox(),
-                                  isDense: true,
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    color: _assignments[index] == OcrField.skip
-                                        ? CupertinoColors.secondaryLabel
-                                        : CupertinoColors.systemBlue,
-                                  ),
-                                  items: OcrField.values.map((field) {
-                                    return DropdownMenuItem(
-                                      value: field,
+                              child: CupertinoButton(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                                color: _assignments[index] == OcrField.skip
+                                    ? CupertinoColors.systemGrey6
+                                    : CupertinoColors.systemBlue.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(8),
+                                minSize: 0,
+                                onPressed: () => _showFieldPicker(index),
+                                child: Row(
+                                  children: [
+                                    Expanded(
                                       child: Text(
-                                        field.label,
-                                        style: const TextStyle(fontSize: 13),
+                                        _assignments[index].label,
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          color: _assignments[index] == OcrField.skip
+                                              ? CupertinoColors.secondaryLabel
+                                              : CupertinoColors.systemBlue,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
                                       ),
-                                    );
-                                  }).toList(),
-                                  onChanged: (value) {
-                                    if (value != null) {
-                                      setState(() => _assignments[index] = value);
-                                    }
-                                  },
+                                    ),
+                                    const Icon(CupertinoIcons.chevron_down,
+                                        size: 12, color: CupertinoColors.systemGrey),
+                                  ],
                                 ),
                               ),
                             ),
