@@ -23,7 +23,7 @@ class CardEditScreen extends StatefulWidget {
 class _CardEditScreenState extends State<CardEditScreen> {
   late final TextEditingController _name, _nameKana, _company, _companyKana,
       _department, _title, _email, _phone, _mobilePhone, _fax,
-      _zipCode, _address, _note, _projectCodes;
+      _zipCode, _address, _address2, _address3, _note, _projectCodes;
   bool _isOcrLoading = false;
   late final FocusNode _nameFocusNode;     // 氏名フィールドのフォーカス監視用
   late final FocusNode _companyFocusNode;  // 会社名フィールドのフォーカス監視用
@@ -49,6 +49,8 @@ class _CardEditScreenState extends State<CardEditScreen> {
     _fax          = TextEditingController(text: c?.fax          ?? '');
     _zipCode      = TextEditingController(text: c?.zipCode      ?? '');
     _address      = TextEditingController(text: c?.address      ?? '');
+    _address2     = TextEditingController(text: '');
+    _address3     = TextEditingController(text: '');
     _note         = TextEditingController(text: c?.note         ?? '');
     _projectCodes = TextEditingController(text: c?.projectCodes.join(',') ?? '');
     _industry = widget.card?.industry ?? '';
@@ -76,7 +78,7 @@ class _CardEditScreenState extends State<CardEditScreen> {
   @override
   void dispose() {
     for (final c in [_name,_nameKana,_company,_companyKana,_department,
-      _title,_email,_phone,_mobilePhone,_fax,_zipCode,_address,_note,_projectCodes]) {
+      _title,_email,_phone,_mobilePhone,_fax,_zipCode,_address,_address2,_address3,_note,_projectCodes]) {
       c.dispose();
     }
     _nameFocusNode.dispose();
@@ -201,7 +203,7 @@ class _CardEditScreenState extends State<CardEditScreen> {
         _applyOcrResult(reviewed);
       }
     } catch (e) {
-      if (mounted) _showAlert('エラー', 'スキャンに失敗しました: \$e');
+      if (mounted) _showAlert('エラー', 'スキャンに失敗しました: $e');
       if (mounted) setState(() => _isOcrLoading = false);
     }
   }
@@ -238,16 +240,20 @@ class _CardEditScreenState extends State<CardEditScreen> {
 
   void _applyOcrResult(Map<String, String> result) {
     setState(() {
-      if (result['name']!.isNotEmpty) _name.text = result['name']!;
-      if (result['company']!.isNotEmpty) _company.text = result['company']!;
-      if (result['department']!.isNotEmpty) _department.text = result['department']!;
-      if (result['title']!.isNotEmpty) _title.text = result['title']!;
-      if (result['email']!.isNotEmpty) _email.text = result['email']!;
-      if (result['phone']!.isNotEmpty) _phone.text = result['phone']!;
-      if (result['mobilePhone']!.isNotEmpty) _mobilePhone.text = result['mobilePhone']!;
-      if (result['fax']!.isNotEmpty) _fax.text = result['fax']!;
-      if (result['zipCode']!.isNotEmpty) _zipCode.text = result['zipCode']!;
-      if (result['address']!.isNotEmpty) _address.text = result['address']!;
+      if ((result['name'] ?? '').isNotEmpty) _name.text = result['name']!;
+      if ((result['nameKana'] ?? '').isNotEmpty) _nameKana.text = result['nameKana']!;
+      if ((result['company'] ?? '').isNotEmpty) _company.text = result['company']!;
+      if ((result['department'] ?? '').isNotEmpty) _department.text = result['department']!;
+      if ((result['title'] ?? '').isNotEmpty) _title.text = result['title']!;
+      if ((result['email'] ?? '').isNotEmpty) _email.text = result['email']!;
+      if ((result['phone'] ?? '').isNotEmpty) _phone.text = result['phone']!;
+      if ((result['mobilePhone'] ?? '').isNotEmpty) _mobilePhone.text = result['mobilePhone']!;
+      if ((result['fax'] ?? '').isNotEmpty) _fax.text = result['fax']!;
+      if ((result['zipCode'] ?? '').isNotEmpty) _zipCode.text = result['zipCode']!;
+      if ((result['address'] ?? '').isNotEmpty) _address.text = result['address']!;
+      if ((result['address2'] ?? '').isNotEmpty) _address2.text = result['address2']!;
+      if ((result['address3'] ?? '').isNotEmpty) _address3.text = result['address3']!;
+      if ((result['industry'] ?? '').isNotEmpty) _industry = result['industry']!;
     });
     // OCR結果セット後にDBからよみがなを自動補完
     if (_nameKana.text.isEmpty && _name.text.isNotEmpty) {
@@ -275,7 +281,8 @@ class _CardEditScreenState extends State<CardEditScreen> {
         department:_department.text.trim(), title:_title.text.trim(),
         email:_email.text.trim(), phone:_phone.text.trim(),
         mobilePhone:_mobilePhone.text.trim(), fax:_fax.text.trim(),
-        zipCode:_zipCode.text.trim(), address:_address.text.trim(),
+        zipCode:_zipCode.text.trim(),
+        address:'${_address.text.trim()} ${_address2.text.trim()} ${_address3.text.trim()}'.trim(),
         note:_note.text.trim(), industry:_industry,
         projectCodes:codes, updatedAt:DateTime.now(),
       ));
@@ -286,7 +293,8 @@ class _CardEditScreenState extends State<CardEditScreen> {
         department:_department.text.trim(), title:_title.text.trim(),
         email:_email.text.trim(), phone:_phone.text.trim(),
         mobilePhone:_mobilePhone.text.trim(), fax:_fax.text.trim(),
-        zipCode:_zipCode.text.trim(), address:_address.text.trim(),
+        zipCode:_zipCode.text.trim(),
+        address:'${_address.text.trim()} ${_address2.text.trim()} ${_address3.text.trim()}'.trim(),
         note:_note.text.trim(), industry:_industry,
         imagePath:_scannedImagePath, projectCodes:codes,
       ));
@@ -494,7 +502,9 @@ class _CardEditScreenState extends State<CardEditScreen> {
         ]),
         CupertinoListSection.insetGrouped(header: const Text('住所'), children: [
           _buildField(label: '郵便番号', controller: _zipCode, keyboardType: TextInputType.number),
-          _buildField(label: '住所', controller: _address),
+          _buildField(label: '住所①', controller: _address),
+          _buildField(label: '住所②', controller: _address2),
+          _buildField(label: '住所③', controller: _address3),
         ]),
         CupertinoListSection.insetGrouped(
           header: const Text('関連プロジェクト'),

@@ -72,9 +72,11 @@ class OcrService {
       final lines = fullText.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
 
       // 生テキスト行を保存（OcrReviewScreenで使用）
-      lastLines = lines;
+      // 郵便番号+住所を分離した行リストを確認画面・パース両方に使用
+      final splitLines = _splitZipAndAddress(lines);
+      lastLines = splitLines;
 
-      return _parseLines(lines);
+      return _parseLines(splitLines);
     } catch (e) {
       throw Exception('Vision API error: \$e');
     }
@@ -107,9 +109,70 @@ class OcrService {
   //   - よみがな（ふりがな）は取得不可
   //   → OcrReviewScreenでユーザーが手動修正
   // ============================================================
+  // OCR行リストの前処理：郵便番号+住所を分離して2行に分割
+  static List<String> _splitZipAndAddress(List<String> lines) {
+    final result = <String>[];
+    for (final line in lines) {
+      // 〒XXX-XXXX + 住所が同一行の場合に分離
+      final zipMatch = RegExp(r'[〒ａ]?\d{3}[-－]\d{4}').firstMatch(line);
+      if (zipMatch != null && RegExp(r'[都道府県市区町村]').hasMatch(line)) {
+        final zip = zipMatch.group(0)!;
+        final address = line.replaceAll(RegExp(r'[〒ａ]?\d{3}[-－]\d{4}\s*'), '').trim();
+        result.add(zip);         // 郵便番号を独立した行として追加
+        if (address.isNotEmpty) result.add(address); // 住所を独立した行として追加
+      } else {
+        result.add(line);
+      }
+    }
+    return result;
+  }
+
+  // ローマ字→ひらがな変換（ヘボン式・訓令式対応）
+  static String _romajiToHiragana(String romaji) {
+    final map = {
+      'sha':'しゃ','shi':'し','shu':'しゅ','sho':'しょ',
+      'chi':'ち','tsu':'つ','tchi':'っち',
+      'cha':'ちゃ','chu':'ちゅ','cho':'ちょ',
+      'kya':'きゃ','kyu':'きゅ','kyo':'きょ',
+      'nya':'にゃ','nyu':'にゅ','nyo':'にょ',
+      'hya':'ひゃ','hyu':'ひゅ','hyo':'ひょ',
+      'mya':'みゃ','myu':'みゅ','myo':'みょ',
+      'rya':'りゃ','ryu':'りゅ','ryo':'りょ',
+      'ka':'か','ki':'き','ku':'く','ke':'け','ko':'こ',
+      'sa':'さ','si':'し','su':'す','se':'せ','so':'そ',
+      'ta':'た','ti':'ち','tu':'つ','te':'て','to':'と',
+      'na':'な','ni':'に','nu':'ぬ','ne':'ね','no':'の',
+      'ha':'は','hi':'ひ','hu':'ふ','he':'へ','ho':'ほ',
+      'ma':'ま','mi':'み','mu':'む','me':'め','mo':'も',
+      'ya':'や','yu':'ゆ','yo':'よ',
+      'ra':'ら','ri':'り','ru':'る','re':'れ','ro':'ろ',
+      'wa':'わ','wi':'ゐ','we':'ゑ','wo':'を',
+      'ga':'が','gi':'ぎ','gu':'ぐ','ge':'げ','go':'ご',
+      'za':'ざ','zi':'じ','zu':'ず','ze':'ぜ','zo':'ぞ',
+      'da':'だ','di':'ぢ','du':'づ','de':'で','do':'ど',
+      'ba':'ば','bi':'び','bu':'ぶ','be':'べ','bo':'ぼ',
+      'pa':'ぱ','pi':'ぴ','pu':'ぷ','pe':'ぺ','po':'ぽ',
+      'fa':'ふぁ','fu':'ふ',
+      'a':'あ','i':'い','u':'う','e':'え','o':'お',
+      'n':'ん',
+    };
+
+    String result = romaji.toLowerCase();
+    // 長い音から順に置換
+    final keys = map.keys.toList()..sort((a, b) => b.length.compareTo(a.length));
+    for (final key in keys) {
+      result = result.replaceAll(key, map[key]!);
+    }
+    // 変換できなかった文字が残っている場合は空文字を返す
+    if (RegExp(r'[a-z]').hasMatch(result)) return '';
+    return result;
+  }
+
   static Map<String, String> _parseLines(List<String> lines) {
-    String name = '', company = '', department = '', title = '';
+    String name = '', nameKana = '', company = '', department = '', title = '';
     String email = '', phone = '', mobilePhone = '', fax = '', zipCode = '', address = '';
+    // よみがな候補（ひらがな・ローマ字行を収集）
+    final kanaCandidate = <String>[];
 
     for (final rawLine in lines) {
       final line = rawLine.trim();
@@ -246,6 +309,12 @@ class OcrService {
         continue;
       }
 
+      // ⑮.5 ひらがな行をよみがな候補として収集
+      if (RegExp(r'^[ぁ-ん\s　ー]+$').hasMatch(line) && line.length <= 15) {
+        kanaCandidate.add(line.replaceAll(RegExp(r'[\s　]'), ''));
+        continue;
+      }
+
       // ⑯ 氏名（字間スペース対応、漢字2〜5文字）
       // 【注意】ロゴ・印章テキストが混入する場合あり → OcrReviewScreenで修正
       if (name.isEmpty) {
@@ -267,9 +336,27 @@ class OcrService {
       }
     }
 
-    // よみがな（nameKana）はOCRで取得不可 → 空文字で返す
+    // よみがな類推処理
+    // ① ひらがな行から類推（名刺にふりがなが印刷されている場合）
+    if (nameKana.isEmpty && kanaCandidate.isNotEmpty) {
+      nameKana = kanaCandidate.first;
+    }
+
+    // ② メールアドレスから類推（例：kobayashi.chigusa@... → こばやしちぐさ）
+    if (nameKana.isEmpty && email.isNotEmpty && name.isNotEmpty) {
+      final emailLocal = email.split('@').first.toLowerCase();
+      // メールのローカル部をローマ字として取得（ドット・アンダースコアで分割）
+      final parts = emailLocal.split(RegExp(r'[._\-]'));
+      if (parts.length >= 2) {
+        // ローマ字→ひらがな変換（基本的なヘボン式）
+        final romaji = parts.take(2).join('');
+        final kana = _romajiToHiragana(romaji);
+        if (kana.isNotEmpty) nameKana = kana;
+      }
+    }
+
     return {
-      'name': name, 'nameKana': '', 'company': company,
+      'name': name, 'nameKana': nameKana, 'company': company,
       'department': department, 'title': title,
       'email': email, 'phone': phone, 'mobilePhone': mobilePhone,
       'fax': fax, 'zipCode': zipCode, 'address': address,

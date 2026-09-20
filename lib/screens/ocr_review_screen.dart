@@ -1,9 +1,11 @@
 // lib/screens/ocr_review_screen.dart
+import 'dart:math' show min;
 import 'package:flutter/cupertino.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
-import '../providers/card_provider.dart';
 import '../db/database_helper.dart';
+import '../services/ocr_ai_service.dart';
+import '../services/settings_service.dart';
 
 enum OcrField {
   skip('－（対象外）'),
@@ -23,7 +25,10 @@ enum OcrField {
   mobilePhone('携帯'),
   fax('FAX'),
   zipCode('郵便番号'),
-  address('住所'),
+  address1('住所①'),
+  address2('住所②'),
+  address3('住所③'),
+  email('メール'),
   projectCodes('関連'),
   note('備考');
 
@@ -52,6 +57,8 @@ class _OcrReviewScreenState extends State<OcrReviewScreen> {
   List<String> _companyNames = [];
   // 会社名候補（行ごと）
   Map<int, List<String>> _companyCandidates = {};
+  String _suggestedIndustry = '';
+  int _companyMatchLength = SettingsService.defaultCompanyMatchLength;
 
   @override
   void initState() {
@@ -62,9 +69,12 @@ class _OcrReviewScreenState extends State<OcrReviewScreen> {
 
   Future<void> _loadCompanyNames() async {
     final uid = context.read<AuthProvider>().uid;
-    final names = await context.read<CardProvider>().getAllCompanyNames(uid);
+    _companyMatchLength = await SettingsService.getCompanyMatchLength();
+
+    // company_dictから全会社名を取得（business_cardsより高速）
+    final dictRows = await DatabaseHelper.instance.searchCompanyDict(uid, '');
     setState(() {
-      _companyNames = names;
+      _companyNames = dictRows.map((r) => r['company'] as String).toList();
       // 各行に対して類似会社名を検索
       for (int i = 0; i < widget.lines.length; i++) {
         final candidates = _findSimilarCompanies(widget.lines[i]);
@@ -73,56 +83,77 @@ class _OcrReviewScreenState extends State<OcrReviewScreen> {
         }
       }
     });
+
+    // バックグラウンドでWikipedia検索して業種を取得
+    final company = widget.autoResult['company'] ?? '';
+    if (company.isNotEmpty) _fetchIndustryFromWikipedia(company);
   }
 
-  // 編集距離で類似会社名を検索
-  int _editDistance(String a, String b) {
-    final m = a.length, n = b.length;
-    final dp = List.generate(m + 1, (i) => List.filled(n + 1, 0));
-    for (int i = 0; i <= m; i++) dp[i][0] = i;
-    for (int j = 0; j <= n; j++) dp[0][j] = j;
-    for (int i = 1; i <= m; i++) {
-      for (int j = 1; j <= n; j++) {
-        if (a[i-1] == b[j-1]) dp[i][j] = dp[i-1][j-1];
-        else dp[i][j] = 1 + [dp[i-1][j], dp[i][j-1], dp[i-1][j-1]].reduce((a, b) => a < b ? a : b);
-      }
+  // AIサービスで業種を取得（バックグラウンド実行）
+  // ※ OcrAiService.instanceを差し替えることで高精度AIに切り替え可能
+  Future<void> _fetchIndustryFromWikipedia(String company) async {
+    final industry = await OcrAiService.instance.detectIndustry(company, '');
+    if (industry.isNotEmpty && mounted) {
+      setState(() => _suggestedIndustry = industry);
     }
-    return dp[m][n];
   }
 
+  // 会社名の正規化（株式会社・合同会社等の法人格を除去）
+  String _normalizeCompany(String name) {
+    return name
+        .replaceAll(RegExp(r'株式会社|有限会社|合同会社|一般社団法人|公益財団法人|一般財団法人|公益社団法人|NPO法人'), '')
+        .replaceAll(RegExp(r'\s+'), '')
+        .trim();
+  }
+
+  // 部分一致で類似会社名を検索（法人格除去・単語分割・3文字以上マッチ）
   List<String> _findSimilarCompanies(String token) {
     if (token.isEmpty || _companyNames.isEmpty) return [];
 
-    // ① 完全一致または部分一致を優先
-    final exact = _companyNames.where((c) => c.contains(token) || token.contains(c)).toList();
-    if (exact.isNotEmpty) return exact.take(3).toList();
+    final result = <String>{};
+    final normalizedToken = _normalizeCompany(token);
 
-    // ② 部分文字列マッチング強化（3文字以上の共通部分があればヒット）
-    final partialMatch = <String>[];
+    // ① 正規化後の完全一致・双方向部分一致（最優先）
     for (final c in _companyNames) {
-      // tokenの3文字以上の部分文字列がcに含まれるか確認
-      for (int len = token.length - 1; len >= 3; len--) {
-        for (int start = 0; start <= token.length - len; start++) {
-          final sub = token.substring(start, start + len);
-          if (c.contains(sub)) {
-            partialMatch.add(c);
+      final normalizedC = _normalizeCompany(c);
+      if (normalizedC.contains(normalizedToken) ||
+          normalizedToken.contains(normalizedC) ||
+          c.contains(token) || token.contains(c)) {
+        result.add(c);
+      }
+    }
+    if (result.length >= 3) return result.take(3).toList();
+
+    // ② 単語分割して各単語（設定文字数以上）で部分一致
+    final words = normalizedToken
+        .split(RegExp(r'[\s\u3000·,\-_]+'))
+        .where((w) => w.length >= _companyMatchLength).toList();
+    for (final word in words) {
+      for (final c in _companyNames) {
+        final normalizedC = _normalizeCompany(c);
+        if (normalizedC.contains(word) || word.contains(normalizedC)) {
+          result.add(c);
+        }
+      }
+    }
+    if (result.length >= 3) return result.take(3).toList();
+
+    // ③ 3文字以上の部分文字列でマッチ
+    for (final c in _companyNames) {
+      final normalizedC = _normalizeCompany(c);
+      for (int len = min(normalizedToken.length, 5); len >= _companyMatchLength; len--) {
+        for (int start = 0; start <= normalizedToken.length - len; start++) {
+          final sub = normalizedToken.substring(start, start + len);
+          if (!RegExp(r'^[\d\s]+\$').hasMatch(sub) && normalizedC.contains(sub)) {
+            result.add(c);
             break;
           }
         }
-        if (partialMatch.contains(c)) break;
+        if (result.contains(c)) break;
       }
     }
-    if (partialMatch.isNotEmpty) {
-      // 共通部分が長いものを優先
-      partialMatch.sort((a, b) => b.length.compareTo(a.length));
-      return partialMatch.take(3).toList();
-    }
 
-    // ③ 編集距離で類似検索（閾値を少し緩める）
-    final threshold = (token.length * 0.5).ceil().clamp(1, 5);
-    final similar = _companyNames.where((c) => _editDistance(token, c) <= threshold).toList();
-    similar.sort((a, b) => _editDistance(token, a).compareTo(_editDistance(token, b)));
-    return similar.take(3).toList();
+    return result.take(5).toList();
   }
 
   OcrField _guessField(String line) {
@@ -136,8 +167,12 @@ class _OcrReviewScreenState extends State<OcrReviewScreen> {
     if (result['phone'] == line) return OcrField.phone;
     if (result['mobilePhone'] == line) return OcrField.mobilePhone;
     if (result['fax'] == line) return OcrField.fax;
-    if (result['zipCode'] == line) return OcrField.zipCode;
-    if (result['address'] == line) return OcrField.address;
+    // 郵便番号は〒マーク有無・ハイフン全角半角を考慮してマッチング
+    final zipResult = result['zipCode'] ?? '';
+    final lineNormalized = line.replaceAll('〒', '').replaceAll('－', '-').trim();
+    if (zipResult.isNotEmpty && (zipResult == line || zipResult == lineNormalized || line.contains(zipResult))) return OcrField.zipCode;
+    if (result['address'] == line) return OcrField.address1;
+    if (result['email'] == line) return OcrField.email;
     if (result['projectCodes'] == line) return OcrField.projectCodes;
     if (result['note'] == line) return OcrField.note;
     return OcrField.skip;
@@ -147,7 +182,9 @@ class _OcrReviewScreenState extends State<OcrReviewScreen> {
     final result = <String, String>{
       'name': '', 'nameKana': '', 'company': '', 'companyKana': _autoCompanyKana,
       'department': '', 'title': '', 'phone': '', 'mobilePhone': '', 'fax': '',
-      'zipCode': '', 'address': '', 'projectCodes': '', 'note': '',
+      'zipCode': '', 'address': '', 'address2': '', 'address3': '',
+      'email': '', 'projectCodes': '', 'note': '',
+      'industry': _suggestedIndustry,
     };
     // 部署・役職の連結用
     final deptParts = <String>[];
@@ -180,7 +217,10 @@ class _OcrReviewScreenState extends State<OcrReviewScreen> {
           : field == OcrField.mobilePhone ? 'mobilePhone'
           : field == OcrField.fax ? 'fax'
           : field == OcrField.zipCode ? 'zipCode'
-          : field == OcrField.address ? 'address'
+          : field == OcrField.address1 ? 'address'
+          : field == OcrField.address2 ? 'address2'
+          : field == OcrField.address3 ? 'address3'
+          : field == OcrField.email ? 'email'
           : field == OcrField.projectCodes ? 'projectCodes'
           : field == OcrField.note ? 'note' : '';
       if (key.isNotEmpty && result[key]!.isEmpty) result[key] = value;

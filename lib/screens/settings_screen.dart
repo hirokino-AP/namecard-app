@@ -13,6 +13,9 @@
 
 import 'package:flutter/cupertino.dart';
 import '../services/settings_service.dart';
+import '../db/database_helper.dart';
+import 'package:provider/provider.dart';
+import '../providers/auth_provider.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -28,6 +31,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _themeColor = SettingsService.defaultThemeColor;
   bool _isLoading = true;
   bool _saveCardImage = SettingsService.defaultSaveCardImage;
+  int _companyMatchLength = SettingsService.defaultCompanyMatchLength;
 
   // テーマカラー選択肢
   static const List<Map<String, String>> _themeColors = [
@@ -57,14 +61,67 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final size      = await SettingsService.getFontSize();
     final color     = await SettingsService.getThemeColor();
     final saveImage = await SettingsService.getSaveCardImage();
+    final matchLength = await SettingsService.getCompanyMatchLength();
     setState(() {
-      _voiceSearchDelay = delay;
-      _displayCount     = count;
-      _fontSize         = size;
-      _themeColor       = color;
-      _saveCardImage    = saveImage;
-      _isLoading        = false;
+      _voiceSearchDelay   = delay;
+      _displayCount       = count;
+      _fontSize           = size;
+      _themeColor         = color;
+      _saveCardImage      = saveImage;
+      _companyMatchLength = matchLength;
+      _isLoading          = false;
     });
+  }
+
+  Future<void> _rebuildCompanyDict() async {
+    final uid = context.read<AuthProvider>().uid;
+    showCupertinoDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const CupertinoAlertDialog(
+        title: Text('更新中...'),
+        content: Padding(
+          padding: EdgeInsets.only(top: 12),
+          child: CupertinoActivityIndicator(),
+        ),
+      ),
+    );
+    final success = await DatabaseHelper.instance.rebuildCompanyDict(uid);
+    if (!mounted) return;
+    Navigator.of(context).pop();
+    if (success) {
+      final rows = await DatabaseHelper.instance.searchCompanyDict(uid, '');
+      if (!mounted) return;
+      showCupertinoDialog(
+        context: context,
+        builder: (_) => CupertinoAlertDialog(
+          title: const Text('更新完了'),
+          content: Text('${rows.length}社の会社辞書を更新しました。'),
+          actions: [
+            CupertinoDialogAction(
+              isDefaultAction: true,
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+    } else {
+      showCupertinoDialog(
+        context: context,
+        builder: (_) => CupertinoAlertDialog(
+          title: const Text('エラー'),
+          content: const Text('会社辞書の更新に失敗しました。'),
+          actions: [
+            CupertinoDialogAction(
+              isDefaultAction: true,
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+    }
   }
 
   Future<void> _saveSettings() async {
@@ -73,6 +130,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await SettingsService.setFontSize(_fontSize);
     await SettingsService.setThemeColor(_themeColor);
     await SettingsService.setSaveCardImage(_saveCardImage);
+    await SettingsService.setCompanyMatchLength(_companyMatchLength);
     if (!mounted) return;
     showCupertinoDialog(
       context: context,
@@ -261,6 +319,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     header: const Text('データ'),
                     footer: const Text('名刺画像を保存するとストレージを使用します（1枚約200〜300KB）。'),
                     children: [
+                      CupertinoListTile(
+                        title: const Text('会社辞書を更新'),
+                        additionalInfo: const Text('タップで更新',
+                            style: TextStyle(color: CupertinoColors.systemGrey)),
+                        trailing: const Icon(CupertinoIcons.refresh,
+                            color: CupertinoColors.systemBlue),
+                        onTap: _rebuildCompanyDict,
+                      ),
+                      CupertinoListTile(
+                        title: const Text('会社名マッチング文字数'),
+                        additionalInfo: Text(
+                          '$_companyMatchLength文字以上',
+                          style: const TextStyle(color: CupertinoColors.systemBlue),
+                        ),
+                        trailing: const CupertinoListTileChevron(),
+                        onTap: () => _showPicker(
+                          title: '会社名マッチング文字数',
+                          message: '会社名候補を表示する最小文字数（3〜6文字）',
+                          options: [3, 4, 5, 6],
+                          current: _companyMatchLength,
+                          label: (v) => '$v文字以上',
+                          onSelect: (v) => _companyMatchLength = v,
+                        ),
+                      ),
                       CupertinoListTile(
                         title: const Text('名刺画像を保存する'),
                         additionalInfo: Text(

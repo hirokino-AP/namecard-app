@@ -50,7 +50,7 @@ class DatabaseHelper {
     final path = join(dbPath, 'app_namecard.db');
     return await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -61,6 +61,22 @@ class DatabaseHelper {
     if (oldVersion < 2) {
       // v1→v2: industryフィールド追加
       await db.execute("ALTER TABLE business_cards ADD COLUMN industry TEXT NOT NULL DEFAULT ''");
+    }
+    if (oldVersion < 3) {
+      // v2→v3: company_dictテーブル追加
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS company_dict (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id       TEXT NOT NULL DEFAULT '',
+          company       TEXT NOT NULL DEFAULT '',
+          company_kana  TEXT NOT NULL DEFAULT '',
+          abbreviation  TEXT NOT NULL DEFAULT '',
+          count         INTEGER NOT NULL DEFAULT 1,
+          updated_at    TEXT NOT NULL
+        )
+      ''');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_dict_user_id ON company_dict(user_id)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_dict_company ON company_dict(company)');
     }
   }
 
@@ -95,6 +111,21 @@ class DatabaseHelper {
     await db.execute('CREATE INDEX IF NOT EXISTS idx_company_kana ON business_cards(company_kana)');
     await db.execute('CREATE INDEX IF NOT EXISTS idx_name         ON business_cards(name)');
     await db.execute('CREATE INDEX IF NOT EXISTS idx_company      ON business_cards(company)');
+
+    // company_dictテーブル
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS company_dict (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id       TEXT NOT NULL DEFAULT '',
+        company       TEXT NOT NULL DEFAULT '',
+        company_kana  TEXT NOT NULL DEFAULT '',
+        abbreviation  TEXT NOT NULL DEFAULT '',
+        count         INTEGER NOT NULL DEFAULT 1,
+        updated_at    TEXT NOT NULL
+      )
+    ''');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_dict_user_id ON company_dict(user_id)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_dict_company ON company_dict(company)');
   }
 
   Future<BusinessCard> insert(BusinessCard card) async {
@@ -120,7 +151,7 @@ class DatabaseHelper {
   Future<List<BusinessCard>> getAllByUser(String userId) async {
     final db = await database;
     final maps = await db.query('business_cards',
-        where: 'user_id = ?', whereArgs: [userId], orderBy: 'name_kana ASC');
+        where: 'user_id = ?', whereArgs: [userId], orderBy: 'updated_at DESC');
     return maps.map((m) => BusinessCard.fromMap(m)).toList();
   }
 
@@ -243,6 +274,105 @@ class DatabaseHelper {
 
 
   // iTunesで転送されたnamecard.dbを自動インポート
+  // ============================================================
+  // company_dict操作
+  // ============================================================
+
+  // business_cardsからcompany_dictを再構築
+  Future<bool> rebuildCompanyDict(String userId) async {
+    try {
+      final db = await database;
+      final now = DateTime.now().toIso8601String();
+
+      // 既存の辞書を削除
+      await db.delete('company_dict', where: 'user_id = ?', whereArgs: [userId]);
+
+      // business_cardsから会社名・よみがなを集計
+      final rows = await db.rawQuery('''
+        SELECT company, company_kana, COUNT(*) as cnt
+        FROM business_cards
+        WHERE user_id = ? AND company != ''
+        GROUP BY company, company_kana
+        ORDER BY cnt DESC
+      ''', [userId]);
+
+      // company_dictに登録
+      await db.transaction((txn) async {
+        for (final row in rows) {
+          final company = row['company'] as String;
+          final kana = row['company_kana'] as String? ?? '';
+          final count = row['cnt'] as int;
+          // 省庁略称を自動設定
+          final abbr = _getAbbreviation(company);
+          await txn.insert('company_dict', {
+            'user_id': userId,
+            'company': company,
+            'company_kana': kana,
+            'abbreviation': abbr,
+            'count': count,
+            'updated_at': now,
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
+        }
+      });
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // 省庁略称マッピング
+  static const Map<String, String> _abbreviationMap = {
+    '経済産業省': '経産省',
+    '文部科学省': '文科省',
+    '厚生労働省': '厚労省',
+    '国土交通省': '国交省',
+    '農林水産省': '農水省',
+    '環境省': '環境省',
+    '防衛省': '防衛省',
+    '総務省': '総務省',
+    '財務省': '財務省',
+    '外務省': '外務省',
+    '法務省': '法務省',
+    '内閣府': '内閣府',
+    '復興庁': '復興庁',
+    'デジタル庁': 'デジ庁',
+    '消費者庁': '消費者庁',
+    '金融庁': '金融庁',
+    '警察庁': '警察庁',
+    '文化庁': '文化庁',
+    '気象庁': '気象庁',
+    '国税庁': '国税庁',
+  };
+
+  String _getAbbreviation(String company) {
+    for (final entry in _abbreviationMap.entries) {
+      if (company.contains(entry.key)) return entry.value;
+    }
+    return '';
+  }
+
+  // company_dictから会社名を検索（部分一致）
+  Future<List<Map<String, dynamic>>> searchCompanyDict(
+      String userId, String keyword, {int minLength = 3}) async {
+    final db = await database;
+    if (keyword.isEmpty) {
+      // キーワードなし→件数順で上位20件
+      return await db.query('company_dict',
+          where: 'user_id = ?',
+          whereArgs: [userId],
+          orderBy: 'count DESC',
+          limit: 20);
+    }
+    // 略称・正式名称・よみがなで部分一致検索
+    return await db.rawQuery('''
+      SELECT * FROM company_dict
+      WHERE user_id = ?
+        AND (company LIKE ? OR company_kana LIKE ? OR abbreviation LIKE ?)
+      ORDER BY count DESC
+      LIMIT 10
+    ''', [userId, '%$keyword%', '%$keyword%', '%$keyword%']);
+  }
+
   Future<int> importFromItunes(String userId) async {
     try {
       final docsDir = await getApplicationDocumentsDirectory();

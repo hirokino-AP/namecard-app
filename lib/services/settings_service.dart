@@ -86,10 +86,26 @@ class SettingsService {
   static const String _keySaveCardImage = 'save_card_image';
   static const bool defaultSaveCardImage = true;
 
+  // 会社名マッチング最小文字数
+  static const String _keyCompanyMatchLength = 'company_match_length';
+  static const int defaultCompanyMatchLength = 3; // デフォルト3文字
+
   // 画像保存設定を取得（trueなら画像を保存する）
   static Future<bool> getSaveCardImage() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(_keySaveCardImage) ?? defaultSaveCardImage;
+  }
+
+  // 会社名マッチング最小文字数を取得
+  static Future<int> getCompanyMatchLength() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt(_keyCompanyMatchLength) ?? defaultCompanyMatchLength;
+  }
+
+  // 会社名マッチング最小文字数を保存
+  static Future<void> setCompanyMatchLength(int length) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_keyCompanyMatchLength, length);
   }
 
   // 画像保存設定を保存
