@@ -30,7 +30,19 @@ import VisionKit
 
     channel.setMethodCallHandler { [weak self] (call: FlutterMethodCall, result: @escaping FlutterResult) in
       guard let self = self else { return }
-      if call.method == "pickDatabase" {
+      if call.method == "convertToYomigana" {
+        let text = call.arguments as? String ?? ""
+        let yomigana = self.convertToYomigana(text)
+        result(yomigana)
+      } else if call.method == "convertListToYomigana" {
+        // 会社名リストを一括変換
+        let names = call.arguments as? [String] ?? []
+        var results: [String: String] = [:]
+        for name in names {
+          results[name] = self.convertToYomigana(name)
+        }
+        result(results)
+      } else if call.method == "pickDatabase" {
         self.documentPickerResult = result
         let types = [UTType.data]
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: types)
@@ -176,6 +188,20 @@ import VisionKit
     documentPickerResult?(FlutterError(code: "SCAN_ERROR", message: error.localizedDescription, details: nil))
   }
 
+  // 漢字→よみがな変換（Apple NLFramework使用）
+  func convertToYomigana(_ text: String) -> String {
+    // CFStringTransformで漢字→ローマ字→ひらがなに直接変換
+    let mutableString = NSMutableString(string: text) as CFMutableString
+    CFStringTransform(mutableString, nil, kCFStringTransformToLatin, false)
+    CFStringTransform(mutableString, nil, kCFStringTransformLatinHiragana, false)
+    // 長音符・アクセント記号を除去
+    var result = mutableString as String
+    result = result.replacingOccurrences(of: "\u{0304}", with: "")
+    result = result.replacingOccurrences(of: "\u{0308}", with: "")
+    result = result.replacingOccurrences(of: "\u{0301}", with: "")
+    return result
+  }
+
   func readSQLiteToJSON(url: URL) -> String {
     var db: OpaquePointer?
     guard sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
@@ -184,7 +210,7 @@ import VisionKit
     defer { sqlite3_close(db) }
 
     var stmt: OpaquePointer?
-    let query = "SELECT user_id, name, name_kana, company, company_kana, department, title, email, phone, mobile_phone, fax, zip_code, address, note, image_path, voice_memo_path, project_codes, created_at, updated_at FROM business_cards"
+    let query = "SELECT user_id, name, name_kana, company, company_kana, department, title, industry, email, phone, mobile_phone, fax, zip_code, address, note, image_path, voice_memo_path, project_codes, created_at, updated_at FROM business_cards"
     guard sqlite3_prepare_v2(db, query, -1, &stmt, nil) == SQLITE_OK else {
       return "[]"
     }
@@ -192,7 +218,7 @@ import VisionKit
 
     var rows: [[String: String]] = []
     while sqlite3_step(stmt) == SQLITE_ROW {
-      let cols = ["user_id","name","name_kana","company","company_kana","department","title","email","phone","mobile_phone","fax","zip_code","address","note","image_path","voice_memo_path","project_codes","created_at","updated_at"]
+      let cols = ["user_id","name","name_kana","company","company_kana","department","title","industry","email","phone","mobile_phone","fax","zip_code","address","note","image_path","voice_memo_path","project_codes","created_at","updated_at"]
       var row: [String: String] = [:]
       for (i, col) in cols.enumerated() {
         if let val = sqlite3_column_text(stmt, Int32(i)) {

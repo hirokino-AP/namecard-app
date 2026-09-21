@@ -1,5 +1,7 @@
 // lib/screens/card_edit_screen.dart
 import 'dart:io';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -186,9 +188,25 @@ class _CardEditScreenState extends State<CardEditScreen> {
 
       // 設定で画像保存がオンの場合のみパスを保存
       final saveImage = await SettingsService.getSaveCardImage();
+      String? savedImagePath;
+      if (saveImage) {
+        // 一時ファイルを永続ディレクトリにコピー
+        try {
+          final appDir = await getApplicationDocumentsDirectory();
+
+          final imagesDir = Directory(p.join(appDir.path, 'card_images'));
+          if (!await imagesDir.exists()) await imagesDir.create(recursive: true);
+          final fileName = 'card_${DateTime.now().millisecondsSinceEpoch}.jpg';
+          final destPath = p.join(imagesDir.path, fileName);
+          await File(filePath).copy(destPath);
+          savedImagePath = destPath;
+        } catch (e) {
+          savedImagePath = filePath; // コピー失敗時は元のパスを使用
+        }
+      }
       setState(() {
         _isOcrLoading = false;
-        _scannedImagePath = saveImage ? filePath : null;
+        _scannedImagePath = savedImagePath;
       });
       final reviewed = await Navigator.of(context).push<Map<String, String>>(
         CupertinoPageRoute(

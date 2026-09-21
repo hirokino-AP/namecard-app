@@ -15,6 +15,7 @@ import '../providers/card_provider.dart';
 import 'card_detail_screen.dart';
 import 'card_edit_screen.dart';
 import 'duplicate_screen.dart';
+import 'company_dict_screen.dart';
 
 class CardListScreen extends StatefulWidget {
   const CardListScreen({super.key});
@@ -169,6 +170,21 @@ class _CardListScreenState extends State<CardListScreen> {
                 Icon(CupertinoIcons.table, size: 20),
                 SizedBox(width: 8),
                 Text('Excelで出力・共有'),
+              ],
+            ),
+          ),
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.of(context).pop();
+              Navigator.of(context).push(CupertinoPageRoute(
+                  builder: (_) => const CompanyDictScreen()));
+            },
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(CupertinoIcons.building_2_fill, size: 20),
+                SizedBox(width: 8),
+                Text('会社辞書確認'),
               ],
             ),
           ),

@@ -25,6 +25,7 @@ import 'dart:io';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
+import 'package:flutter/services.dart';
 import 'settings_service.dart';
 
 class OcrService {
@@ -84,7 +85,17 @@ class OcrService {
       // company_dictから会社名リストを取得（氏名誤判定防止）
       // ※DBアクセスは非同期なので静的メソッドでは難しいため
       // OcrService.companyNamesを事前にセットする方式を使用
-      return _parseLines(splitLines, prefixes: prefixes, companyNames: OcrService.companyNames);
+      final parsed = _parseLines(splitLines, prefixes: prefixes, companyNames: OcrService.companyNames);
+
+      // よみがなが取得できなかった場合はApple NLFrameworkで補完
+      if (parsed['nameKana']!.isEmpty && parsed['name']!.isNotEmpty) {
+        final yomigana = await _convertToYomigana(parsed['name']!);
+        if (yomigana.isNotEmpty) {
+          parsed['nameKana'] = yomigana;
+        }
+      }
+
+      return parsed;
     } catch (e) {
       throw Exception('Vision API error: \$e');
     }
@@ -138,17 +149,33 @@ class OcrService {
     final result = <String>[];
     for (final line in lines) {
       // 〒XXX-XXXX + 住所が同一行の場合に分離
-      final zipMatch = RegExp(r'[〒ａ]?\d{3}[-－]\d{4}').firstMatch(line);
+      // ハイフン1個・頭3桁・後4桁・計7桁のみ郵便番号として認識
+      final lineNorm = line.replaceAll('－', '-');
+      final zipMatch = RegExp(r'(?<![\d])[〒ａ]?(\d{3})-(\d{4})(?![\d\-])').firstMatch(lineNorm);
       if (zipMatch != null && RegExp(r'[都道府県市区町村]').hasMatch(line)) {
-        final zip = zipMatch.group(0)!;
+        final zip = zipMatch.group(1)! + '-' + zipMatch.group(2)!;
         final address = line.replaceAll(RegExp(r'[〒ａ]?\d{3}[-－]\d{4}\s*'), '').trim();
-        result.add(zip);         // 郵便番号を独立した行として追加
-        if (address.isNotEmpty) result.add(address); // 住所を独立した行として追加
+        result.add(zip);
+        if (address.isNotEmpty) result.add(address);
       } else {
         result.add(line);
       }
     }
     return result;
+  }
+
+
+  // Apple NLFrameworkで漢字→よみがな変換
+  static const _channel = MethodChannel('com.hirokino.namecardapp/document_picker');
+  
+  static Future<String> _convertToYomigana(String text) async {
+    if (text.isEmpty) return '';
+    try {
+      final result = await _channel.invokeMethod<String>('convertToYomigana', text);
+      return result ?? '';
+    } catch (e) {
+      return '';
+    }
   }
 
   // カタカナ→ひらがな変換
@@ -164,11 +191,27 @@ class OcrService {
   }
 
   // ローマ字の姓名を反転（英語式→日本式）
-  // 例：Hiroshi Kinoshita → Kinoshita Hiroshi → きのしたひろし
+  // 例：Hiroshi Kinoshita → きのしたひろし
+  // 例：KINOSHITA HIROSHI → きのしたひろし
+  // 例：Kinoshita, Hiroshi → きのしたひろし
   static String _reverseRomajiName(String romaji) {
-    final parts = romaji.trim().split(RegExp(r'[\s　]+'));
-    if (parts.length < 2) return romaji;
-    // 英語式（名 姓）→ 日本式（姓 名）に反転
+    // カンマ区切り対応（Kinoshita, Hiroshi）
+    String normalized = romaji.trim();
+    if (normalized.contains(',')) {
+      // カンマ区切りは既に姓→名の順なのでそのまま結合
+      final parts = normalized.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+      return _romajiToHiragana(parts.join('').toLowerCase());
+    }
+
+    // スペース区切り
+    final parts = normalized.split(RegExp(r'[\s　]+')).where((s) => s.isNotEmpty).toList();
+    if (parts.length < 2) return '';
+
+    // イニシャルのみの部分を除外（例：H. Kinoshita → スキップ）
+    if (parts.any((p) => RegExp(r'^[A-Za-z]\.$').hasMatch(p))) return '';
+
+    // 全て大文字の場合も対応（KINOSHITA HIROSHI）
+    // 2単語の場合：英語式（名 姓）→ 日本式（姓 名）に反転
     final reversed = [...parts.reversed].join('');
     return _romajiToHiragana(reversed.toLowerCase());
   }
@@ -252,53 +295,46 @@ class OcrService {
         continue;
       }
 
-      // 郵便番号（〒XXX-XXXX）
-      if (RegExp(r'[〒ａ]?\d{3}[-－]\d{4}(?!\d)').hasMatch(line) &&
-          !RegExp(r'0\d{9,10}').hasMatch(line)) {
-        final zipMatch = RegExp(r'\d{3}[-－]\d{4}').firstMatch(line);
-        if (zipMatch != null) { zipCode = zipMatch.group(0)!; lineFields[i] = 'zipCode'; }
-        final afterZip = line.replaceAll(RegExp(r'[〒ａ]?\d{3}[-－]\d{4}'), '').trim();
-        if (afterZip.isNotEmpty && RegExp(r'[都道府県市区町村]').hasMatch(afterZip) && address.isEmpty) {
-          address = afterZip;
+      // ① FAX単独行（最初に特定→番号を確定してから電話・〒と区別）
+      if (RegExp(r'(?:FAX|Fax\.?|fax|ファックス|ファクス)[：:.\s]*').hasMatch(line)) {
+        final cleaned = line.replaceAll(RegExp(r'(?:FAX|Fax\.?|fax|ファックス|ファクス)[：:.\s]*'), '').trim();
+        final numMatch = RegExp(r'0\d[\d\-]{8,12}').firstMatch(cleaned);
+        if (numMatch != null && fax.isEmpty) {
+          fax = numMatch.group(0)!.replaceAll(RegExp(r'[^\d\-]'), '');
+          lineFields[i] = 'fax'; continue;
         }
-        continue;
       }
 
-      // TEL&FAX同一行
+      // ② TEL&FAX同一行（FAXと電話を同時に特定）
       if (RegExp(r'(?:TEL|Tel\.?|tel|電話)').hasMatch(line) && RegExp(r'(?:FAX|Fax\.?|fax)').hasMatch(line)) {
         final telMatch = RegExp(r'(?:TEL|Tel\.?|tel|電話)[：:.\s]*([0-9０-９\-－()（）+]+)').firstMatch(line);
         final faxMatch = RegExp(r'(?:FAX|Fax\.?|fax)[：:.\s]*([0-9０-９\-－()（）+]+)').firstMatch(line);
         if (telMatch != null) {
           final num = telMatch.group(1)!.replaceAll(RegExp(r'[^\d\-]'), '');
-          if (RegExp(r'^0[789]0').hasMatch(num)) { if (mobilePhone.isEmpty) { mobilePhone = num; lineFields[i] = 'mobilePhone'; } }
+          if (RegExp(r'^0[678]0').hasMatch(num)) { if (mobilePhone.isEmpty) { mobilePhone = num; lineFields[i] = 'mobilePhone'; } }
+          else if (RegExp(r'^050').hasMatch(num)) { if (phone.isEmpty) { phone = num; lineFields[i] = 'phone'; } }
           else { if (phone.isEmpty) { phone = num; lineFields[i] = 'phone'; } }
         }
         if (faxMatch != null && fax.isEmpty) { fax = faxMatch.group(1)!.replaceAll(RegExp(r'[^\d\-]'), ''); lineFields[i] = 'fax'; }
         continue;
       }
 
-      // FAX単独行
-      if (RegExp(r'(?:FAX|Fax\.?|fax|ファックス|ファクス)[：:.\s]*').hasMatch(line)) {
-        final cleaned = line.replaceAll(RegExp(r'(?:FAX|Fax\.?|fax|ファックス|ファクス)[：:.\s]*'), '').trim();
-        final numMatch = RegExp(r'[\d\-－()（）]+').firstMatch(cleaned);
-        if (numMatch != null && fax.isEmpty) { fax = numMatch.group(0)!.replaceAll(RegExp(r'[^\d\-]'), ''); lineFields[i] = 'fax'; continue; }
-      }
-
-      // TEL単独行
+      // ③ TEL単独行（携帯・固定・IPを判別）
       if (RegExp(r'(?:TEL|Tel\.?|tel|電話)[：:.\s]*').hasMatch(line)) {
         final cleaned = line.replaceAll(RegExp(r'(?:TEL|Tel\.?|tel|電話)[：:.\s]*'), '').trim();
         final numMatch = RegExp(r'0\d[\d\-－]{8,12}').firstMatch(cleaned);
         if (numMatch != null) {
           final num = numMatch.group(0)!.replaceAll(RegExp(r'[^\d\-]'), '');
-          if (RegExp(r'^0[789]0').hasMatch(num)) { if (mobilePhone.isEmpty) { mobilePhone = num; lineFields[i] = 'mobilePhone'; } }
+          if (RegExp(r'^0[678]0').hasMatch(num)) { if (mobilePhone.isEmpty) { mobilePhone = num; lineFields[i] = 'mobilePhone'; } }
+          else if (RegExp(r'^050').hasMatch(num)) { if (phone.isEmpty) { phone = num; lineFields[i] = 'phone'; } }
           else { if (phone.isEmpty) { phone = num; lineFields[i] = 'phone'; } }
           continue;
         }
       }
 
-      // 国際電話（+81）
+      // ④ 国際電話（+81）
       if (RegExp(r'\+81[\s\-]?[\(\d]').hasMatch(line)) {
-        final intlMatch = RegExp(r'\+81[\s\-]?\(?(\ d[\s\-()\ d]{6,14})').firstMatch(line);
+        final intlMatch = RegExp(r'\+81[\s\-]?\(?([\d][\s\-()[\d]{6,14})').firstMatch(line);
         if (intlMatch != null) {
           final num = intlMatch.group(0)!.replaceAll(RegExp(r'[^\d]'), '').replaceFirst('81', '0');
           if (phone.isEmpty) { phone = num; lineFields[i] = 'phone'; }
@@ -306,17 +342,17 @@ class OcrService {
         }
       }
 
-      // 携帯プレフィックス
+      // ⑤ 携帯プレフィックス（Mobile/携帯）
       if (RegExp(r'(?:Mobile|mobile|携帯)[.：:\s]*').hasMatch(line)) {
         final cleaned = line.replaceAll(RegExp(r'(?:Mobile|mobile|携帯)[.：:\s]*'), '').trim();
-        final numMatch = RegExp(r'0[789]0[\d\-]{8,9}').firstMatch(cleaned);
+        final numMatch = RegExp(r'0[678]0[\d\-]{8,9}').firstMatch(cleaned);
         if (numMatch != null && mobilePhone.isEmpty) {
           mobilePhone = numMatch.group(0)!.replaceAll(RegExp(r'[^\d\-]'), '');
           lineFields[i] = 'mobilePhone'; continue;
         }
       }
 
-      // 固定電話プレフィックス
+      // ⑥ 固定電話プレフィックス（Phone/Tel.）
       if (RegExp(r'(?:Phone|phone|Tel\.)[.：:\s]*').hasMatch(line)) {
         final cleaned = line.replaceAll(RegExp(r'(?:Phone|phone|Tel\.)[.：:\s]*'), '').trim();
         final numMatch = RegExp(r'0\d[\d\-]{8,12}').firstMatch(cleaned);
@@ -326,26 +362,46 @@ class OcrService {
         }
       }
 
-      // 携帯電話（プレフィックスなし）
-      if (RegExp(r'0[789]0[-－\s]?\d{4}[-－\s]?\d{4}').hasMatch(line)) {
-        final numMatch = RegExp(r'0[789]0[-－\s]?\d{4}[-－\s]?\d{4}').firstMatch(line);
+      // ⑦ 携帯電話（プレフィックスなし・ハイフン2個・11桁）
+      if (RegExp(r'0[678]0[-－]\d{4}[-－]\d{4}').hasMatch(line)) {
+        final numMatch = RegExp(r'0[678]0[-－]\d{4}[-－]\d{4}').firstMatch(line);
         if (numMatch != null && mobilePhone.isEmpty) {
           mobilePhone = numMatch.group(0)!.replaceAll(RegExp(r'[^\d\-]'), '');
           lineFields[i] = 'mobilePhone'; continue;
         }
       }
 
-      // 固定電話（プレフィックスなし）
-      if (RegExp(r'0\d{1,4}[-－\s]?\d{2,4}[-－\s]?\d{4}').hasMatch(line) &&
-          !line.contains('〒') && !RegExp(r'\d{3}[-－]\d{4}(?!\d)').hasMatch(line)) {
-        final numMatch = RegExp(r'0\d{1,4}[-－\s]?\d{2,4}[-－\s]?\d{4}').firstMatch(line);
+      // ⑧ IP電話050（プレフィックスなし・ハイフン2個・11桁）
+      if (RegExp(r'050[-－]\d{4}[-－]\d{4}').hasMatch(line)) {
+        final numMatch = RegExp(r'050[-－]\d{4}[-－]\d{4}').firstMatch(line);
         if (numMatch != null && phone.isEmpty) {
           phone = numMatch.group(0)!.replaceAll(RegExp(r'[^\d\-]'), '');
           lineFields[i] = 'phone'; continue;
         }
       }
 
-      // 住所（都道府県市区町村）
+      // ⑨ 固定電話（プレフィックスなし・ハイフン2個・10桁）
+      if (RegExp(r'0\d{1,3}[-－]\d{2,4}[-－]\d{4}').hasMatch(line)) {
+        final numMatch = RegExp(r'0\d{1,3}[-－]\d{2,4}[-－]\d{4}').firstMatch(line);
+        if (numMatch != null && phone.isEmpty) {
+          phone = numMatch.group(0)!.replaceAll(RegExp(r'[^\d\-]'), '');
+          lineFields[i] = 'phone'; continue;
+        }
+      }
+
+      // ⑩ 郵便番号（FAX・電話確定後に判定・ハイフン1個・頭3桁・後4桁・計7桁のみ）
+      final zipLineNorm = line.replaceAll('－', '-');
+      final zipOnlyMatch = RegExp(r'(?<![\d])[〒ａ]?(\d{3})-(\d{4})(?![\d\-])').firstMatch(zipLineNorm);
+      if (zipOnlyMatch != null) {
+        zipCode = zipOnlyMatch.group(1)! + '-' + zipOnlyMatch.group(2)!;
+        lineFields[i] = 'zipCode';
+        final afterZip = line.replaceAll(RegExp(r'[〒ａ]?\d{3}[-－]\d{4}'), '').trim();
+        if (afterZip.isNotEmpty && RegExp(r'[都道府県市区町村]').hasMatch(afterZip) && address.isEmpty) {
+          address = afterZip;
+        }
+        continue;
+      }
+
       if (RegExp(r'[都道府県市区町村]').hasMatch(line) && !RegExp(r'株式会社|有限会社|合同会社').hasMatch(line)) {
         if (address.isEmpty) {
           final cleanAddress = line.replaceAll(RegExp(r'[〒ａ]?\d{3}[-－]\d{4}\s*'), '').trim();
@@ -358,8 +414,18 @@ class OcrService {
         continue;
       }
 
-      // 会社名（企業形態マーカーで確定）
-      if (RegExp(r'株式会社|有限会社|合同会社|合資会社|合名会社|一般社団|公益社団|一般財団|公益財団|特定非営利|社会福祉|医療法人|学校法人|宗教法人|省$|庁$|機構|協会|組合|大学|大学院|University|Corporation|Corp\.|Inc\.|Ltd\.').hasMatch(line)) {
+      // 会社名（企業形態マーカーが前後に付いているもののみ会社名として認識）
+      // 例：「富士フイルム株式会社」→✅ 「東芝」→❌（マーカーなし）
+      final _companyMarker = RegExp(
+        r'(?:株式会社|有限会社|合同会社|合資会社|合名会社|一般社団法人|公益社団法人|一般財団法人|公益財団法人|特定非営利活動法人|社会福祉法人|医療法人|学校法人|宗教法人|独立行政法人|国立大学法人|地方独立行政法人)'
+        r'|(?:省|庁|機構|協会|組合|連合会|連盟|財団|大学院|大学|高等学校|中学校|小学校)'
+        r'|(?:University|Corporation|Corp\.|Inc\.|Ltd\.|Co\.,? ?Ltd\.)'
+      );
+      // 前後どちらかにマーカーがある場合のみ会社名として認識
+      final _markerAtStart = RegExp(r'^(?:株式会社|有限会社|合同会社|合資会社|合名会社|一般社団法人|公益社団法人|一般財団法人|公益財団法人|特定非営利活動法人|社会福祉法人|医療法人|学校法人|宗教法人|独立行政法人|国立大学法人)');
+      final _markerAtEnd = RegExp(r'(?:株式会社|有限会社|合同会社|合資会社|合名会社|省|庁|機構|協会|組合|連合会|連盟|財団|大学院|大学|高等学校|中学校|小学校|Corporation|Corp\.|Inc\.|Ltd\.|Co\.,? ?Ltd\.)$');
+      if (_companyMarker.hasMatch(line) && 
+          (_markerAtStart.hasMatch(line) || _markerAtEnd.hasMatch(line))) {
         if (company.isEmpty) { company = line; lineFields[i] = 'company'; }
         continue;
       }
@@ -443,12 +509,33 @@ class OcrService {
     if (nameKana.isEmpty && kanaCandidate.isNotEmpty) {
       nameKana = kanaCandidate.first;
     }
+    // ③ メールアドレスから類推（氏名の読みを補助的に使用）
     if (nameKana.isEmpty && email.isNotEmpty && name.isNotEmpty) {
       final emailLocal = email.split('@').first.toLowerCase();
-      final parts = emailLocal.split(RegExp(r'[._\-]'));
-      if (parts.length >= 2) {
-        final kana = _romajiToHiragana(parts.take(2).join(''));
-        if (kana.isNotEmpty) nameKana = kana;
+      // ドット・アンダースコア・ハイフンで分割
+      final parts = emailLocal.split(RegExp(r'[._\-]'))
+          .where((p) => p.isNotEmpty && p.length >= 2)
+          .toList();
+
+      if (parts.isNotEmpty) {
+        // 全部結合してひらがな変換を試みる
+        for (int take = parts.length; take >= 1; take--) {
+          final romaji = parts.take(take).join('');
+          final kana = _romajiToHiragana(romaji);
+          if (kana.isNotEmpty && kana.length >= 3) {
+            // 漢字の氏名と照合（先頭2文字のよみがなが含まれているか）
+            // メールが姓名順・名姓順どちらかを判断
+            nameKana = kana;
+            break;
+          }
+        }
+
+        // 逆順（名姓→姓名）も試みる
+        if (nameKana.isEmpty && parts.length >= 2) {
+          final reversedRomaji = parts.reversed.take(2).join('');
+          final kana = _romajiToHiragana(reversedRomaji);
+          if (kana.isNotEmpty && kana.length >= 3) nameKana = kana;
+        }
       }
     }
 

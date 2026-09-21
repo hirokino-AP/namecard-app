@@ -28,6 +28,7 @@
 // lib/db/database_helper.dart
 import 'dart:io';
 import 'dart:convert';
+import 'package:flutter/services.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
@@ -50,7 +51,7 @@ class DatabaseHelper {
     final path = join(dbPath, 'app_namecard.db');
     return await openDatabase(
       path,
-      version: 4,
+      version: 5,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -81,6 +82,10 @@ class DatabaseHelper {
     if (oldVersion < 4) {
       // v3→v4: company_dictにindustryフィールド追加
       await db.execute("ALTER TABLE company_dict ADD COLUMN industry TEXT NOT NULL DEFAULT ''");
+    }
+    if (oldVersion < 5) {
+      // v4→v5: company_dictにconfirmedフィールド追加
+      await db.execute("ALTER TABLE company_dict ADD COLUMN confirmed INTEGER NOT NULL DEFAULT 0");
     }
   }
 
@@ -126,6 +131,7 @@ class DatabaseHelper {
         abbreviation  TEXT NOT NULL DEFAULT '',
         count         INTEGER NOT NULL DEFAULT 1,
         industry      TEXT NOT NULL DEFAULT '',
+        confirmed     INTEGER NOT NULL DEFAULT 0,
         updated_at    TEXT NOT NULL
       )
     ''');
@@ -301,11 +307,25 @@ class DatabaseHelper {
         ORDER BY cnt DESC
       ''', [userId]);
 
+      // NLFrameworkで会社名リストのよみがなを一括変換
+      final companyNames = rows.map((r) => r['company'] as String).toList();
+      Map<String, String> yomiganaMap = {};
+      try {
+        const channel = MethodChannel('com.hirokino.namecardapp/document_picker');
+        final result = await channel.invokeMapMethod<String, String>(
+            'convertListToYomigana', companyNames);
+        yomiganaMap = result ?? {};
+      } catch (e) {
+        // NLFramework失敗時は空のまま
+      }
+
       // company_dictに登録
       await db.transaction((txn) async {
         for (final row in rows) {
           final company = row['company'] as String;
-          final kana = row['company_kana'] as String? ?? '';
+          // よみがな：既存データ優先→NLFramework→空文字
+          String kana = row['company_kana'] as String? ?? '';
+          if (kana.isEmpty) kana = yomiganaMap[company] ?? '';
           final count = row['cnt'] as int;
           // 省庁略称を自動設定
           final abbr = _getAbbreviation(company);
@@ -315,6 +335,8 @@ class DatabaseHelper {
             'company_kana': kana,
             'abbreviation': abbr,
             'count': count,
+            'industry': '',
+            'confirmed': 0,
             'updated_at': now,
           }, conflictAlgorithm: ConflictAlgorithm.replace);
         }
@@ -397,6 +419,47 @@ class DatabaseHelper {
     ''', [userId, '%$keyword%', '%$keyword%', '%$keyword%']);
   }
 
+  // company_dictのconfirmedフラグを更新
+  Future<void> updateCompanyDictConfirmed(String userId, String company, bool confirmed) async {
+    try {
+      final db = await database;
+      await db.update(
+        'company_dict',
+        {'confirmed': confirmed ? 1 : 0, 'updated_at': DateTime.now().toIso8601String()},
+        where: 'user_id = ? AND company = ?',
+        whereArgs: [userId, company],
+      );
+    } catch (e) {
+      // 更新失敗は無視
+    }
+  }
+
+  // company_dictの未確認リストを取得
+  Future<List<Map<String, dynamic>>> getUnconfirmedCompanyDict(String userId) async {
+    final db = await database;
+    return await db.query(
+      'company_dict',
+      where: 'user_id = ? AND confirmed = 0',
+      whereArgs: [userId],
+      orderBy: 'count DESC',
+    );
+  }
+
+  // company_dictのよみがなを更新
+  Future<void> updateCompanyDictKana(String userId, String company, String kana) async {
+    try {
+      final db = await database;
+      await db.update(
+        'company_dict',
+        {'company_kana': kana, 'updated_at': DateTime.now().toIso8601String()},
+        where: 'user_id = ? AND company = ?',
+        whereArgs: [userId, company],
+      );
+    } catch (e) {
+      // 更新失敗は無視
+    }
+  }
+
   // company_dictのindustryを更新
   Future<void> updateCompanyDictIndustry(String userId, String company, String industry) async {
     try {
@@ -460,15 +523,22 @@ class DatabaseHelper {
 
   Future<int> importFromPath(String srcPath, String userId) async {
     try {
-      if (!await File(srcPath).exists()) return 0;
+      if (!await File(srcPath).exists()) return -1; // ファイルが存在しない
       final tmpDir = await getTemporaryDirectory();
       final tmpPath = join(tmpDir.path, 'import_tmp.db');
       await File(srcPath).copy(tmpPath);
       final srcDb = await openDatabase(tmpPath, readOnly: true);
+      // テーブル一覧を取得してデバッグ
+      final tables = await srcDb.rawQuery(
+          "SELECT name FROM sqlite_master WHERE type='table'");
+      if (tables.isEmpty) { await srcDb.close(); return -2; } // テーブルなし
+      // business_cardsテーブルが存在するか確認
+      final hasTable = tables.any((t) => t['name'] == 'business_cards');
+      if (!hasTable) { await srcDb.close(); return -3; } // business_cardsテーブルなし
       final rows = await srcDb.query('business_cards');
       await srcDb.close();
       await File(tmpPath).delete();
-      if (rows.isEmpty) return 0;
+      if (rows.isEmpty) return -4; // データが0件
       final db = await database;
       int count = 0;
       await db.transaction((txn) async {
