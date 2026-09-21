@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/business_card.dart';
+import '../db/database_helper.dart';
 import '../providers/card_provider.dart';
 import 'card_edit_screen.dart';
 
@@ -18,7 +19,15 @@ class CardDetailScreen extends StatefulWidget {
 }
 
 class _CardDetailScreenState extends State<CardDetailScreen> {
-  BusinessCard get card => widget.card;
+  late BusinessCard _card;
+
+  @override
+  void initState() {
+    super.initState();
+    _card = widget.card;
+  }
+
+  BusinessCard get card => _card;
 
   Future<void> _callPhone(BuildContext context, String phone) async {
     final uri = Uri(scheme: 'tel', path: phone);
@@ -133,8 +142,15 @@ class _CardDetailScreenState extends State<CardDetailScreen> {
         middle: Text(card.name),
         trailing: Row(mainAxisSize: MainAxisSize.min, children: [
           CupertinoButton(padding: EdgeInsets.zero,
-              onPressed: () => Navigator.of(context).push(
-                  CupertinoPageRoute(builder: (_) => CardEditScreen(card: card))),
+              onPressed: () async {
+                await Navigator.of(context).push(
+                    CupertinoPageRoute(builder: (_) => CardEditScreen(card: card)));
+                if (!mounted) return;
+                final updated = await DatabaseHelper.instance.getById(card.id!);
+                if (updated != null && mounted) {
+                  setState(() => _card = updated);
+                }
+              },
               child: const Icon(CupertinoIcons.pencil, size: 22)),
           CupertinoButton(padding: EdgeInsets.zero,
               onPressed: () => _confirmDelete(context),

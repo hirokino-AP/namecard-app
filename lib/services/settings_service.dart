@@ -90,10 +90,26 @@ class SettingsService {
   static const String _keyCompanyMatchLength = 'company_match_length';
   static const int defaultCompanyMatchLength = 3; // デフォルト3文字
 
+  // 会社辞書登録件数
+  static const String _keyCompanyDictSize = 'company_dict_size';
+  static const int defaultCompanyDictSize = 0; // デフォルト制限なし（全件）
+
   // 画像保存設定を取得（trueなら画像を保存する）
   static Future<bool> getSaveCardImage() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(_keySaveCardImage) ?? defaultSaveCardImage;
+  }
+
+  // 会社辞書登録件数を取得
+  static Future<int> getCompanyDictSize() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt(_keyCompanyDictSize) ?? defaultCompanyDictSize;
+  }
+
+  // 会社辞書登録件数を保存
+  static Future<void> setCompanyDictSize(int size) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_keyCompanyDictSize, size);
   }
 
   // 会社名マッチング最小文字数を取得
@@ -106,6 +122,29 @@ class SettingsService {
   static Future<void> setCompanyMatchLength(int length) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_keyCompanyMatchLength, length);
+  }
+
+  // OCRプレフィックス除去キーワード
+  static const String _keyOcrPrefixes = 'ocr_prefixes';
+  static const String defaultOcrPrefixes =
+      'E-mail,E-Mail,Email,Mail,email,メール,電子メール,TEL,Tel,tel,電話,FAX,Fax,fax,ファックス,ファクス,Mobile,mobile,携帯,Cell,Phone,phone,直通,内線';
+
+  // OCRプレフィックスキーワードを取得
+  static Future<String> getOcrPrefixes() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_keyOcrPrefixes) ?? defaultOcrPrefixes;
+  }
+
+  // OCRプレフィックスキーワードを保存
+  static Future<void> setOcrPrefixes(String prefixes) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyOcrPrefixes, prefixes);
+  }
+
+  // OCRプレフィックスキーワードをリストで取得
+  static Future<List<String>> getOcrPrefixList() async {
+    final prefixes = await getOcrPrefixes();
+    return prefixes.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
   }
 
   // 画像保存設定を保存

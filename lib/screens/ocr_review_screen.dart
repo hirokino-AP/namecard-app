@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../db/database_helper.dart';
 import '../services/ocr_ai_service.dart';
+import '../services/ocr_service.dart';
 import '../services/settings_service.dart';
 
 enum OcrField {
@@ -63,7 +64,10 @@ class _OcrReviewScreenState extends State<OcrReviewScreen> {
   @override
   void initState() {
     super.initState();
-    _assignments = widget.lines.map((line) => _guessField(line)).toList();
+    _assignments = List.generate(
+        widget.lines.length,
+        (i) => _guessFieldByIndex(i, widget.lines[i]),
+      );
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadCompanyNames());
   }
 
@@ -73,8 +77,10 @@ class _OcrReviewScreenState extends State<OcrReviewScreen> {
 
     // company_dictから全会社名を取得（business_cardsより高速）
     final dictRows = await DatabaseHelper.instance.searchCompanyDict(uid, '');
+    // OcrServiceに会社名リストをセット（氏名誤判定防止）
+    OcrService.companyNames = dictRows.map((r) => r['company'] as String).toList();
     setState(() {
-      _companyNames = dictRows.map((r) => r['company'] as String).toList();
+      _companyNames = OcrService.companyNames;
       // 各行に対して類似会社名を検索
       for (int i = 0; i < widget.lines.length; i++) {
         final candidates = _findSimilarCompanies(widget.lines[i]);
@@ -84,17 +90,32 @@ class _OcrReviewScreenState extends State<OcrReviewScreen> {
       }
     });
 
-    // バックグラウンドでWikipedia検索して業種を取得
+    // バックグラウンドで業種を取得
+    // ① まずcompany_dictを確認 → なければ② Wikipediaで検索
     final company = widget.autoResult['company'] ?? '';
-    if (company.isNotEmpty) _fetchIndustryFromWikipedia(company);
+    if (company.isNotEmpty) _fetchIndustry(company);
   }
 
-  // AIサービスで業種を取得（バックグラウンド実行）
-  // ※ OcrAiService.instanceを差し替えることで高精度AIに切り替え可能
-  Future<void> _fetchIndustryFromWikipedia(String company) async {
+  // 業種取得（company_dict優先→Wikipedia）
+  Future<void> _fetchIndustry(String company) async {
+    final uid = context.read<AuthProvider>().uid;
+
+    // ① company_dictから業種を取得（キャッシュ）
+    final dictRows = await DatabaseHelper.instance.searchCompanyDict(uid, company);
+    if (dictRows.isNotEmpty) {
+      final cachedIndustry = dictRows.first['industry'] as String? ?? '';
+      if (cachedIndustry.isNotEmpty && mounted) {
+        setState(() => _suggestedIndustry = cachedIndustry);
+        return; // キャッシュヒット→Wikipediaは不要
+      }
+    }
+
+    // ② company_dictにない→Wikipediaで業種を検索
     final industry = await OcrAiService.instance.detectIndustry(company, '');
     if (industry.isNotEmpty && mounted) {
       setState(() => _suggestedIndustry = industry);
+      // ③ 結果をcompany_dictに保存（次回はキャッシュから取得）
+      await DatabaseHelper.instance.updateCompanyDictIndustry(uid, company, industry);
     }
   }
 
@@ -156,25 +177,25 @@ class _OcrReviewScreenState extends State<OcrReviewScreen> {
     return result.take(5).toList();
   }
 
-  OcrField _guessField(String line) {
-    final result = widget.autoResult;
-    if (result['name'] == line) return OcrField.name;
-    if (result['nameKana'] == line) return OcrField.nameKana;
-    if (result['company'] == line) return OcrField.company;
-    if (result['companyKana'] == line) return OcrField.companyKana;
-    if (result['department'] == line) return OcrField.department1;
-    if (result['title'] == line) return OcrField.title1;
-    if (result['phone'] == line) return OcrField.phone;
-    if (result['mobilePhone'] == line) return OcrField.mobilePhone;
-    if (result['fax'] == line) return OcrField.fax;
-    // 郵便番号は〒マーク有無・ハイフン全角半角を考慮してマッチング
-    final zipResult = result['zipCode'] ?? '';
-    final lineNormalized = line.replaceAll('〒', '').replaceAll('－', '-').trim();
-    if (zipResult.isNotEmpty && (zipResult == line || zipResult == lineNormalized || line.contains(zipResult))) return OcrField.zipCode;
-    if (result['address'] == line) return OcrField.address1;
-    if (result['email'] == line) return OcrField.email;
-    if (result['projectCodes'] == line) return OcrField.projectCodes;
-    if (result['note'] == line) return OcrField.note;
+  // indexベースでlastLineFieldsから判定結果を取得（最優先）
+  OcrField _guessFieldByIndex(int index, String line) {
+    final fieldName = OcrService.lastLineFields[index];
+    if (fieldName != null && fieldName != 'skip') {
+      switch (fieldName) {
+        case 'name': return OcrField.name;
+        case 'nameKana': return OcrField.nameKana;
+        case 'company': return OcrField.company;
+        case 'department1': return OcrField.department1;
+        case 'title1': return OcrField.title1;
+        case 'email': return OcrField.email;
+        case 'phone': return OcrField.phone;
+        case 'mobilePhone': return OcrField.mobilePhone;
+        case 'fax': return OcrField.fax;
+        case 'zipCode': return OcrField.zipCode;
+        case 'address': return OcrField.address1;
+      }
+    }
+    // lastLineFieldsにない場合→未選択（ユーザーが手動選択）
     return OcrField.skip;
   }
 
@@ -343,6 +364,48 @@ class _OcrReviewScreenState extends State<OcrReviewScreen> {
                 style: TextStyle(color: CupertinoColors.secondaryLabel, fontSize: 12),
               ),
             ),
+            // 業種候補バナー（Wikipedia判定結果）
+            if (_suggestedIndustry.isNotEmpty)
+              GestureDetector(
+                onTap: () {
+                  showCupertinoDialog(
+                    context: context,
+                    builder: (_) => CupertinoAlertDialog(
+                      title: const Text('業種候補'),
+                      content: Text('「$_suggestedIndustry」が候補として検出されました。\n確定ボタンを押すと自動的に業種に設定されます。'),
+                      actions: [
+                        CupertinoDialogAction(
+                          onPressed: () => Navigator.of(context).pop(),
+                          child: const Text('OK'),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+                child: Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 12),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: CupertinoColors.systemGreen.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: CupertinoColors.systemGreen.withValues(alpha: 0.4)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(CupertinoIcons.tag, size: 14, color: CupertinoColors.systemGreen),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          '業種候補：$_suggestedIndustry（Wikipedia参照）',
+                          style: const TextStyle(fontSize: 12, color: CupertinoColors.systemGreen),
+                        ),
+                      ),
+                      const Icon(CupertinoIcons.info_circle, size: 14, color: CupertinoColors.systemGreen),
+                    ],
+                  ),
+                ),
+              ),
+            if (_suggestedIndustry.isNotEmpty) const SizedBox(height: 6),
             Expanded(
               child: ListView.builder(
                 itemCount: widget.lines.length,
@@ -354,15 +417,11 @@ class _OcrReviewScreenState extends State<OcrReviewScreen> {
                     margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      // 全行同じスタイル（スキップも選択可能・取り消し線なし）
-                      color: _assignments[index] != OcrField.skip
-                          ? CupertinoColors.systemBlue.withValues(alpha: 0.05)
-                          : CupertinoColors.systemBackground,
+                      // 全行同じスタイル（スキップも選択可能）
+                      color: CupertinoColors.systemBlue.withValues(alpha: 0.05),
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(
-                        color: _assignments[index] != OcrField.skip
-                            ? CupertinoColors.systemBlue.withValues(alpha: 0.5)
-                            : CupertinoColors.systemGrey4,
+                        color: CupertinoColors.systemBlue.withValues(alpha: 0.3),
                         width: 1.0,
                       ),
                     ),
@@ -392,9 +451,7 @@ class _OcrReviewScreenState extends State<OcrReviewScreen> {
                               flex: 2,
                               child: CupertinoButton(
                                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                                color: _assignments[index] == OcrField.skip
-                                    ? CupertinoColors.systemGrey6
-                                    : CupertinoColors.systemBlue.withValues(alpha: 0.1),
+                                color: CupertinoColors.systemBlue.withValues(alpha: 0.1),
                                 borderRadius: BorderRadius.circular(8),
                                 minSize: 0,
                                 onPressed: () => _showFieldPicker(index),
@@ -405,9 +462,7 @@ class _OcrReviewScreenState extends State<OcrReviewScreen> {
                                         _assignments[index].label,
                                         style: TextStyle(
                                           fontSize: 13,
-                                          color: _assignments[index] == OcrField.skip
-                                              ? CupertinoColors.secondaryLabel
-                                              : CupertinoColors.systemBlue,
+                                          color: CupertinoColors.systemBlue,
                                         ),
                                         overflow: TextOverflow.ellipsis,
                                       ),

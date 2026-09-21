@@ -50,7 +50,7 @@ class DatabaseHelper {
     final path = join(dbPath, 'app_namecard.db');
     return await openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -77,6 +77,10 @@ class DatabaseHelper {
       ''');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_dict_user_id ON company_dict(user_id)');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_dict_company ON company_dict(company)');
+    }
+    if (oldVersion < 4) {
+      // v3→v4: company_dictにindustryフィールド追加
+      await db.execute("ALTER TABLE company_dict ADD COLUMN industry TEXT NOT NULL DEFAULT ''");
     }
   }
 
@@ -121,6 +125,7 @@ class DatabaseHelper {
         company_kana  TEXT NOT NULL DEFAULT '',
         abbreviation  TEXT NOT NULL DEFAULT '',
         count         INTEGER NOT NULL DEFAULT 1,
+        industry      TEXT NOT NULL DEFAULT '',
         updated_at    TEXT NOT NULL
       )
     ''');
@@ -320,8 +325,10 @@ class DatabaseHelper {
     }
   }
 
-  // 省庁略称マッピング
+  // 省庁略称マッピング（正式名称→略称）
+  // 略称からも検索できるようabbreviationフィールドに登録される
   static const Map<String, String> _abbreviationMap = {
+    // 省（2〜3文字略称）
     '経済産業省': '経産省',
     '文部科学省': '文科省',
     '厚生労働省': '厚労省',
@@ -333,6 +340,8 @@ class DatabaseHelper {
     '財務省': '財務省',
     '外務省': '外務省',
     '法務省': '法務省',
+    '文部省': '文科省',   // 旧省庁名
+    // 庁
     '内閣府': '内閣府',
     '復興庁': '復興庁',
     'デジタル庁': 'デジ庁',
@@ -342,6 +351,21 @@ class DatabaseHelper {
     '文化庁': '文化庁',
     '気象庁': '気象庁',
     '国税庁': '国税庁',
+    '防衛装備庁': '防装庁',
+    '資源エネルギー庁': 'エネ庁',
+    '中小企業庁': '中企庁',
+    '特許庁': '特許庁',
+    '林野庁': '林野庁',
+    '水産庁': '水産庁',
+    '海上保安庁': '海保庁',
+    '消防庁': '消防庁',
+    // よく使われる2文字略称（逆引き用）
+    '経産': '経産省',
+    '文科': '文科省',
+    '厚労': '厚労省',
+    '国交': '国交省',
+    '農水': '農水省',
+    '内閣': '内閣府',
   };
 
   String _getAbbreviation(String company) {
@@ -353,15 +377,15 @@ class DatabaseHelper {
 
   // company_dictから会社名を検索（部分一致）
   Future<List<Map<String, dynamic>>> searchCompanyDict(
-      String userId, String keyword, {int minLength = 3}) async {
+      String userId, String keyword, {int limit = 500}) async {
     final db = await database;
     if (keyword.isEmpty) {
-      // キーワードなし→件数順で上位20件
+      // キーワードなし→件数順で上位limit件
       return await db.query('company_dict',
           where: 'user_id = ?',
           whereArgs: [userId],
           orderBy: 'count DESC',
-          limit: 20);
+          limit: limit);
     }
     // 略称・正式名称・よみがなで部分一致検索
     return await db.rawQuery('''
@@ -369,8 +393,31 @@ class DatabaseHelper {
       WHERE user_id = ?
         AND (company LIKE ? OR company_kana LIKE ? OR abbreviation LIKE ?)
       ORDER BY count DESC
-      LIMIT 10
+      LIMIT $limit
     ''', [userId, '%$keyword%', '%$keyword%', '%$keyword%']);
+  }
+
+  // company_dictのindustryを更新
+  Future<void> updateCompanyDictIndustry(String userId, String company, String industry) async {
+    try {
+      final db = await database;
+      await db.update(
+        'company_dict',
+        {'industry': industry, 'updated_at': DateTime.now().toIso8601String()},
+        where: 'user_id = ? AND company = ?',
+        whereArgs: [userId, company],
+      );
+    } catch (e) {
+      // 更新失敗は無視
+    }
+  }
+
+  // company_dictの総件数を取得
+  Future<int> countCompanyDict(String userId) async {
+    final db = await database;
+    final result = await db.rawQuery(
+        'SELECT COUNT(*) as cnt FROM company_dict WHERE user_id = ?', [userId]);
+    return result.first['cnt'] as int;
   }
 
   Future<int> importFromItunes(String userId) async {
@@ -459,6 +506,35 @@ class DatabaseHelper {
       return count;
     } catch (e) {
       return -999;
+    }
+  }
+
+  // ============================================================
+  // バックアップ・リストア
+  // ============================================================
+
+  // app_namecard.dbをコピーしてバックアップファイルのパスを返す
+  Future<String?> createBackup() async {
+    try {
+      final dbPath = await getDatabasesPath();
+      final srcPath = join(dbPath, 'app_namecard.db');
+      if (!await File(srcPath).exists()) return null;
+
+      // 一時ディレクトリにコピー
+      final tmpDir = await getTemporaryDirectory();
+      final now = DateTime.now();
+      final fileName = 'namecard_backup_'
+          '${now.year}${now.month.toString().padLeft(2,'0')}${now.day.toString().padLeft(2,'0')}'
+          '_${now.hour.toString().padLeft(2,'0')}${now.minute.toString().padLeft(2,'0')}'
+          '.db';
+      final destPath = join(tmpDir.path, fileName);
+
+      // DBを一旦クローズしてからコピー
+      await close();
+      await File(srcPath).copy(destPath);
+      return destPath;
+    } catch (e) {
+      return null;
     }
   }
 
