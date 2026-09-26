@@ -33,6 +33,20 @@ class OcrService {
   static List<String> lastLines = [];
   // 会社辞書（氏名誤判定防止用）→OCR前にセットする
   static List<String> companyNames = [];
+  // ローマ字単語のY座標（bounding boxから取得）→名姓判定用
+  static Map<String, double> _romajiPositions = {};
+  // 市外局番パターン（郵便番号との誤認識防止）
+  static final _areaCodePattern = RegExp(
+    r'^0(?:'
+    r'3|6|'                           // 東京・大阪（2桁）
+    r'11|19|22|23|24|25|26|27|28|29|' // 北海道・東北
+    r'42|43|44|45|46|47|48|49|'       // 関東
+    r'52|53|54|55|56|57|58|59|'       // 中部
+    r'72|73|74|75|76|77|78|79|'       // 近畿
+    r'82|83|84|85|86|87|88|89|'       // 中国・四国
+    r'92|93|94|95|96|97|98|99'        // 九州・沖縄
+    r')'
+  );
 
   // Google Cloud Vision API設定（--dart-defineで注入）
   static const _apiKey = String.fromEnvironment('GOOGLE_VISION_API_KEY');
@@ -49,14 +63,14 @@ class OcrService {
       final bytes = await xfile.readAsBytes();
       final base64Image = base64Encode(bytes);
 
-      // Vision API呼び出し
+      // Vision API呼び出し（DOCUMENT_TEXT_DETECTION：bounding box付き）
       final response = await http.post(
-        Uri.parse('${_endpoint}?key=${_apiKey}'),
+        Uri.parse('\${_endpoint}?key=\${_apiKey}'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'requests': [{
             'image': {'content': base64Image},
-            'features': [{'type': 'TEXT_DETECTION', 'maxResults': 1}],
+            'features': [{'type': 'DOCUMENT_TEXT_DETECTION', 'maxResults': 1}],
             'imageContext': {'languageHints': ['ja', 'en']}, // 日本語・英語優先
           }]
         }),
@@ -66,14 +80,49 @@ class OcrService {
         throw Exception("Status: \${response.statusCode}\nBody: \${response.body.substring(0, response.body.length > 500 ? 500 : response.body.length)}");
       }
 
-      // レスポンスからテキスト取得
+      // レスポンスからテキストとbounding box取得
       final data = jsonDecode(response.body);
-      final annotations = data['responses']?[0]?['textAnnotations'] as List?;
-      if (annotations == null || annotations.isEmpty) throw Exception("annotations empty");
-
-      // textAnnotations[0]が全テキスト結合結果
-      final fullText = annotations[0]['description'] as String? ?? '';
+      
+      // DOCUMENT_TEXT_DETECTIONはfullTextAnnotationを使用
+      final fullTextAnnotation = data['responses']?[0]?['fullTextAnnotation'];
+      if (fullTextAnnotation == null) throw Exception("fullTextAnnotation empty");
+      
+      final fullText = fullTextAnnotation['text'] as String? ?? '';
       final lines = fullText.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
+      
+      // bounding boxからローマ字行の位置を取得（名姓判定用）
+      // pages→blocks→paragraphs→words の順で解析
+      final romajiPositions = <String, double>{}; // テキスト→Y座標
+      try {
+        final pages = fullTextAnnotation['pages'] as List? ?? [];
+        for (final page in pages) {
+          final blocks = page['blocks'] as List? ?? [];
+          for (final block in blocks) {
+            final paragraphs = block['paragraphs'] as List? ?? [];
+            for (final para in paragraphs) {
+              final words = para['words'] as List? ?? [];
+              for (final word in words) {
+                // 各単語のY座標（上端）を取得
+                final vertices = word['boundingBox']?['vertices'] as List?;
+                if (vertices != null && vertices.isNotEmpty) {
+                  final y = (vertices[0]['y'] as num?)?.toDouble() ?? 0;
+                  final symbols = word['symbols'] as List? ?? [];
+                  final wordText = symbols.map((s) => s['text'] as String? ?? '').join();
+                  if (RegExp(r'^[A-Za-z]+\$').hasMatch(wordText)) {
+                    romajiPositions[wordText] = y;
+                  }
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        // bounding box取得失敗→テキストのみで継続（影響なし）
+        OcrService._romajiPositions = {};
+      }
+      
+      // ローマ字の位置情報をOcrServiceに保存（_parseLinesで参照）
+      OcrService._romajiPositions = romajiPositions;
 
       // 生テキスト行を保存（OcrReviewScreenで使用）
       // 郵便番号+住所を分離した行リストを確認画面・パース両方に使用
@@ -178,6 +227,18 @@ class OcrService {
     }
   }
 
+  // 全角数字・記号→半角変換（電話番号・郵便番号の前処理）
+  static String _normalizeNumbers(String text) {
+    return text
+      .replaceAllMapped(RegExp(r'[０-９]'), (m) =>
+        String.fromCharCode(m.group(0)!.codeUnitAt(0) - 0xFF10 + 0x30))
+      .replaceAll('－', '-')
+      .replaceAll('ー', '-')
+      .replaceAll('（', '(')
+      .replaceAll('）', ')')
+      .replaceAll('　', ' '); // 全角スペース→半角
+  }
+
   // カタカナ→ひらがな変換
   static String _katakanaToHiragana(String katakana) {
     return katakana.split('').map((c) {
@@ -191,14 +252,14 @@ class OcrService {
   }
 
   // ローマ字の姓名を反転（英語式→日本式）
-  // 例：Hiroshi Kinoshita → きのしたひろし
-  // 例：KINOSHITA HIROSHI → きのしたひろし
-  // 例：Kinoshita, Hiroshi → きのしたひろし
+  // bounding boxのY座標を使って名前行を特定し、名姓順を判定
+  // 例：Ryuichi Yorimoto → よりもとりゅういち（英語式：名 姓 → 日本式：姓 名）
+  // 例：Kinoshita, Hiroshi → きのしたひろし（カンマ区切りは姓名順）
   static String _reverseRomajiName(String romaji) {
-    // カンマ区切り対応（Kinoshita, Hiroshi）
     String normalized = romaji.trim();
+    
+    // カンマ区切り対応（Kinoshita, Hiroshi）→ 既に姓→名の順
     if (normalized.contains(',')) {
-      // カンマ区切りは既に姓→名の順なのでそのまま結合
       final parts = normalized.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
       return _romajiToHiragana(parts.join('').toLowerCase());
     }
@@ -210,10 +271,29 @@ class OcrService {
     // イニシャルのみの部分を除外（例：H. Kinoshita → スキップ）
     if (parts.any((p) => RegExp(r'^[A-Za-z]\.$').hasMatch(p))) return '';
 
-    // 全て大文字の場合も対応（KINOSHITA HIROSHI）
-    // 2単語の場合：英語式（名 姓）→ 日本式（姓 名）に反転
-    final reversed = [...parts.reversed].join('');
-    return _romajiToHiragana(reversed.toLowerCase());
+    // bounding boxのY座標で名姓順を判定
+    // 名刺上部にある単語が姓の可能性が高い（日本語名刺の場合）
+    // ただし英語表記（名 姓）が多いため、基本は反転する
+    // 全大文字の場合（YORIMOTO RYUICHI）も反転
+    
+    // 2単語：英語式（名 姓）→ 日本式（姓 名）に反転してひらがな化
+    if (parts.length == 2) {
+      // Y座標が取得できている場合、位置で姓名を判定
+      final y0 = _romajiPositions[parts[0]];
+      final y1 = _romajiPositions[parts[1]];
+      if (y0 != null && y1 != null) {
+        // 同じY座標（同一行）→ 英語式（名 姓）なので反転
+        // 異なるY座標（別行）→ 別々の情報の可能性があるためスキップ
+        if ((y0 - y1).abs() > 20) return '';
+      }
+      final reversed = [...parts.reversed].join('');
+      return _romajiToHiragana(reversed.toLowerCase());
+    }
+    
+    // 3単語以上：最後の単語が姓（英語式）として反転
+    final lastName = parts.last;
+    final firstName = parts.sublist(0, parts.length - 1).join('');
+    return _romajiToHiragana((lastName + firstName).toLowerCase());
   }
 
   // ローマ字→ひらがな変換（ヘボン式・訓令式対応）
@@ -281,7 +361,7 @@ class OcrService {
     // 【1パス目】確実なマーカーで確定できるものを全行スキャン
     // ============================================================
     for (int i = 0; i < lines.length; i++) {
-      final raw = lines[i].trim();
+      final raw = _normalizeNumbers(lines[i].trim());
       if (raw.isEmpty) continue;
       final line = _applyPrefixFilter(raw);
 
@@ -298,7 +378,7 @@ class OcrService {
       // ① FAX単独行（最初に特定→番号を確定してから電話・〒と区別）
       if (RegExp(r'(?:FAX|Fax\.?|fax|ファックス|ファクス)[：:.\s]*').hasMatch(line)) {
         final cleaned = line.replaceAll(RegExp(r'(?:FAX|Fax\.?|fax|ファックス|ファクス)[：:.\s]*'), '').trim();
-        final numMatch = RegExp(r'0\d[\d\-]{8,12}').firstMatch(cleaned);
+        final numMatch = RegExp(r'0\d[\d\s\-－]{8,14}').firstMatch(cleaned);
         if (numMatch != null && fax.isEmpty) {
           fax = numMatch.group(0)!.replaceAll(RegExp(r'[^\d\-]'), '');
           lineFields[i] = 'fax'; continue;
@@ -307,8 +387,8 @@ class OcrService {
 
       // ② TEL&FAX同一行（FAXと電話を同時に特定）
       if (RegExp(r'(?:TEL|Tel\.?|tel|電話)').hasMatch(line) && RegExp(r'(?:FAX|Fax\.?|fax)').hasMatch(line)) {
-        final telMatch = RegExp(r'(?:TEL|Tel\.?|tel|電話)[：:.\s]*([0-9０-９\-－()（）+]+)').firstMatch(line);
-        final faxMatch = RegExp(r'(?:FAX|Fax\.?|fax)[：:.\s]*([0-9０-９\-－()（）+]+)').firstMatch(line);
+        final telMatch = RegExp(r'(?:TEL|Tel\.?|tel|電話)[：:.\s]*(0\d[\d\s\-－]{8,14})').firstMatch(line);
+        final faxMatch = RegExp(r'(?:FAX|Fax\.?|fax)[：:.\s]*(0\d[\d\s\-－]{8,14})').firstMatch(line);
         if (telMatch != null) {
           final num = telMatch.group(1)!.replaceAll(RegExp(r'[^\d\-]'), '');
           if (RegExp(r'^0[678]0').hasMatch(num)) { if (mobilePhone.isEmpty) { mobilePhone = num; lineFields[i] = 'mobilePhone'; } }
@@ -322,7 +402,7 @@ class OcrService {
       // ③ TEL単独行（携帯・固定・IPを判別）
       if (RegExp(r'(?:TEL|Tel\.?|tel|電話)[：:.\s]*').hasMatch(line)) {
         final cleaned = line.replaceAll(RegExp(r'(?:TEL|Tel\.?|tel|電話)[：:.\s]*'), '').trim();
-        final numMatch = RegExp(r'0\d[\d\-－]{8,12}').firstMatch(cleaned);
+        final numMatch = RegExp(r'0\d[\d\s\-－]{8,14}').firstMatch(cleaned);
         if (numMatch != null) {
           final num = numMatch.group(0)!.replaceAll(RegExp(r'[^\d\-]'), '');
           if (RegExp(r'^0[678]0').hasMatch(num)) { if (mobilePhone.isEmpty) { mobilePhone = num; lineFields[i] = 'mobilePhone'; } }
@@ -345,7 +425,7 @@ class OcrService {
       // ⑤ 携帯プレフィックス（Mobile/携帯）
       if (RegExp(r'(?:Mobile|mobile|携帯)[.：:\s]*').hasMatch(line)) {
         final cleaned = line.replaceAll(RegExp(r'(?:Mobile|mobile|携帯)[.：:\s]*'), '').trim();
-        final numMatch = RegExp(r'0[678]0[\d\-]{8,9}').firstMatch(cleaned);
+        final numMatch = RegExp(r'0[678]0[\s\-－]?\d{3,4}[\s\-－]?\d{4}').firstMatch(cleaned);
         if (numMatch != null && mobilePhone.isEmpty) {
           mobilePhone = numMatch.group(0)!.replaceAll(RegExp(r'[^\d\-]'), '');
           lineFields[i] = 'mobilePhone'; continue;
@@ -355,7 +435,7 @@ class OcrService {
       // ⑥ 固定電話プレフィックス（Phone/Tel.）
       if (RegExp(r'(?:Phone|phone|Tel\.)[.：:\s]*').hasMatch(line)) {
         final cleaned = line.replaceAll(RegExp(r'(?:Phone|phone|Tel\.)[.：:\s]*'), '').trim();
-        final numMatch = RegExp(r'0\d[\d\-]{8,12}').firstMatch(cleaned);
+        final numMatch = RegExp(r'0\d[\d\s\-－]{8,14}').firstMatch(cleaned);
         if (numMatch != null && phone.isEmpty) {
           phone = numMatch.group(0)!.replaceAll(RegExp(r'[^\d\-]'), '');
           lineFields[i] = 'phone'; continue;
@@ -363,8 +443,8 @@ class OcrService {
       }
 
       // ⑦ 携帯電話（プレフィックスなし・ハイフン2個・11桁）
-      if (RegExp(r'0[678]0[-－]\d{4}[-－]\d{4}').hasMatch(line)) {
-        final numMatch = RegExp(r'0[678]0[-－]\d{4}[-－]\d{4}').firstMatch(line);
+      if (RegExp(r'0[678]0[\s\-－]?\d{4}[\s\-－]?\d{4}').hasMatch(line)) {
+        final numMatch = RegExp(r'0[678]0[\s\-－]?\d{4}[\s\-－]?\d{4}').firstMatch(line);
         if (numMatch != null && mobilePhone.isEmpty) {
           mobilePhone = numMatch.group(0)!.replaceAll(RegExp(r'[^\d\-]'), '');
           lineFields[i] = 'mobilePhone'; continue;
@@ -380,12 +460,26 @@ class OcrService {
         }
       }
 
-      // ⑨ 固定電話（プレフィックスなし・ハイフン2個・10桁）
-      if (RegExp(r'0\d{1,3}[-－]\d{2,4}[-－]\d{4}').hasMatch(line)) {
-        final numMatch = RegExp(r'0\d{1,3}[-－]\d{2,4}[-－]\d{4}').firstMatch(line);
-        if (numMatch != null && phone.isEmpty) {
-          phone = numMatch.group(0)!.replaceAll(RegExp(r'[^\d\-]'), '');
-          lineFields[i] = 'phone'; continue;
+      // ⑨ 固定電話（プレフィックスなし・10桁・ハイフンあり/なし両対応）
+      // 同一行に2つ番号がある場合：1つ目→TEL、2つ目→FAX
+      if (RegExp(r'0\d{1,3}[\s\-－]?\d{2,4}[\s\-－]?\d{4}').hasMatch(line)) {
+        final allMatches = RegExp(r'0\d{1,3}[\s\-－]?\d{2,4}[\s\-－]?\d{4}')
+            .allMatches(line).toList();
+        if (allMatches.isNotEmpty) {
+          final num1 = allMatches[0].group(0)!.replaceAll(RegExp(r'[^\d\-]'), '');
+          // 市外局番チェック（郵便番号との誤認識防止）
+          final digits1 = num1.replaceAll('-', '');
+          if (_areaCodePattern.hasMatch(digits1.substring(0, digits1.length > 4 ? 4 : digits1.length))) {
+            if (phone.isEmpty) { phone = num1; lineFields[i] = 'phone'; }
+          } else if (phone.isEmpty) {
+            phone = num1; lineFields[i] = 'phone';
+          }
+          // 2つ目の番号→FAX
+          if (allMatches.length >= 2) {
+            final num2 = allMatches[1].group(0)!.replaceAll(RegExp(r'[^\d\-]'), '');
+            if (fax.isEmpty) { fax = num2; lineFields[i] = 'fax'; }
+          }
+          continue;
         }
       }
 
@@ -393,7 +487,15 @@ class OcrService {
       final zipLineNorm = line.replaceAll('－', '-');
       final zipOnlyMatch = RegExp(r'(?<![\d])[〒ａ]?(\d{3})-(\d{4})(?![\d\-])').firstMatch(zipLineNorm);
       if (zipOnlyMatch != null) {
-        zipCode = zipOnlyMatch.group(1)! + '-' + zipOnlyMatch.group(2)!;
+        final zipCandidate = zipOnlyMatch.group(1)! + '-' + zipOnlyMatch.group(2)!;
+        // 市外局番パターンに一致する場合は郵便番号ではなく電話番号として扱う
+        final fullNum = zipOnlyMatch.group(1)! + zipOnlyMatch.group(2)!;
+        if (_areaCodePattern.hasMatch('0' + fullNum)) {
+          // 電話番号として処理（プレフィックスなし固定電話）
+          if (phone.isEmpty) { phone = zipCandidate; lineFields[i] = 'phone'; }
+          continue;
+        }
+        zipCode = zipCandidate;
         lineFields[i] = 'zipCode';
         final afterZip = line.replaceAll(RegExp(r'[〒ａ]?\d{3}[-－]\d{4}'), '').trim();
         if (afterZip.isNotEmpty && RegExp(r'[都道府県市区町村]').hasMatch(afterZip) && address.isEmpty) {
@@ -461,17 +563,34 @@ class OcrService {
     // ============================================================
     for (int i = 0; i < lines.length; i++) {
       if (lineFields.containsKey(i)) continue; // 1パス目で判定済み
-      final raw = lines[i].trim();
+      final raw = _normalizeNumbers(lines[i].trim());
       if (raw.isEmpty) continue;
       final line = _applyPrefixFilter(raw);
       final noSpace = line.replaceAll(RegExp(r'[\s　]'), '');
 
-      // ローマ字2単語→よみがな候補（名刺に英語名が記載されている場合）
-      if (RegExp(r'^[A-Za-z\s]+$').hasMatch(line) && line.length <= 25) {
+      // ローマ字→よみがな候補（名刺に英語名が記載されている場合）
+      if (RegExp(r'^[A-Za-z\s]+\$').hasMatch(line) && line.length <= 25) {
         final words = line.trim().split(RegExp(r'\s+'));
         if (words.length == 2) {
+          // 同一行に2単語（例：Ryuichi Yorimoto）
           final kana = _reverseRomajiName(line);
           if (kana.isNotEmpty) { kanaCandidate.add(kana); lineFields[i] = 'nameKana'; }
+        } else if (words.length == 1) {
+          // 1単語のみ（例：FUJIOKA）→次の行と連結を試みる
+          if (i + 1 < lines.length) {
+            final nextRaw = _normalizeNumbers(lines[i + 1].trim());
+            final nextLine = _applyPrefixFilter(nextRaw);
+            if (RegExp(r'^[A-Za-z\s]+\$').hasMatch(nextLine) && nextLine.length <= 15) {
+              // 次行もローマ字→連結してよみがな変換（姓→名の順として処理）
+              final combined = line.trim() + ' ' + nextLine.trim();
+              final kana = _reverseRomajiName(combined);
+              if (kana.isNotEmpty) {
+                kanaCandidate.add(kana);
+                lineFields[i] = 'nameKana';
+                lineFields[i + 1] = 'nameKana'; // 次行もマーク
+              }
+            }
+          }
         }
         continue;
       }
@@ -506,35 +625,39 @@ class OcrService {
     lastLineFields = lineFields;
 
     // よみがな類推処理
+    // ① まずkanaCandidateから候補を取得
     if (nameKana.isEmpty && kanaCandidate.isNotEmpty) {
       nameKana = kanaCandidate.first;
     }
-    // ③ メールアドレスから類推（氏名の読みを補助的に使用）
-    if (nameKana.isEmpty && email.isNotEmpty && name.isNotEmpty) {
+
+    // ② メールアドレスから類推（姓名逆転対応）
+    if (email.isNotEmpty) {
       final emailLocal = email.split('@').first.toLowerCase();
-      // ドット・アンダースコア・ハイフンで分割
       final parts = emailLocal.split(RegExp(r'[._\-]'))
           .where((p) => p.isNotEmpty && p.length >= 2)
           .toList();
 
-      if (parts.isNotEmpty) {
-        // 全部結合してひらがな変換を試みる
-        for (int take = parts.length; take >= 1; take--) {
-          final romaji = parts.take(take).join('');
-          final kana = _romajiToHiragana(romaji);
-          if (kana.isNotEmpty && kana.length >= 3) {
-            // 漢字の氏名と照合（先頭2文字のよみがなが含まれているか）
-            // メールが姓名順・名姓順どちらかを判断
-            nameKana = kana;
-            break;
-          }
-        }
+      if (parts.length >= 2) {
+        // 姓名順（fujioka.masayoshi）→ ふじおかまさよし
+        final kanaForward = _romajiToHiragana(parts.join(''));
+        // 名姓順（masayoshi.fujioka）→ ふじおかまさよし（逆転）
+        final kanaReversed = _romajiToHiragana(parts.reversed.join(''));
 
-        // 逆順（名姓→姓名）も試みる
-        if (nameKana.isEmpty && parts.length >= 2) {
-          final reversedRomaji = parts.reversed.take(2).join('');
-          final kana = _romajiToHiragana(reversedRomaji);
-          if (kana.isNotEmpty && kana.length >= 3) nameKana = kana;
+        // 既存のkanaCandidate と照合して一致度が高い方を採用
+        if (nameKana.isEmpty) {
+          // 候補なし→逆順（日本語名刺は名姓順が多い）を優先
+          if (kanaReversed.isNotEmpty && kanaReversed.length >= 3) {
+            nameKana = kanaReversed;
+          } else if (kanaForward.isNotEmpty && kanaForward.length >= 3) {
+            nameKana = kanaForward;
+          }
+        } else {
+          // 既存候補あり→メール逆引き結果と比較して長い方（より完全な読み）を採用
+          if (kanaReversed.length > nameKana.length && kanaReversed.isNotEmpty) {
+            nameKana = kanaReversed;
+          } else if (kanaForward.length > nameKana.length && kanaForward.isNotEmpty) {
+            nameKana = kanaForward;
+          }
         }
       }
     }
