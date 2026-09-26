@@ -84,10 +84,17 @@ class OcrService {
       final data = jsonDecode(response.body);
       
       // DOCUMENT_TEXT_DETECTIONはfullTextAnnotationを使用
+      // nullの場合はtextAnnotationsにフォールバック
       final fullTextAnnotation = data['responses']?[0]?['fullTextAnnotation'];
-      if (fullTextAnnotation == null) throw Exception("fullTextAnnotation empty");
-      
-      final fullText = fullTextAnnotation['text'] as String? ?? '';
+      String fullText;
+      if (fullTextAnnotation != null) {
+        fullText = fullTextAnnotation['text'] as String? ?? '';
+      } else {
+        // フォールバック：textAnnotations（旧TEXT_DETECTION形式）
+        final annotations = data['responses']?[0]?['textAnnotations'] as List?;
+        if (annotations == null || annotations.isEmpty) throw Exception("OCR結果が取得できませんでした");
+        fullText = annotations[0]['description'] as String? ?? '';
+      }
       final lines = fullText.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
       
       // bounding boxからローマ字行の位置を取得（名姓判定用）
@@ -146,7 +153,7 @@ class OcrService {
 
       return parsed;
     } catch (e) {
-      throw Exception('Vision API error: \$e');
+      throw Exception("Vision API error: $e");
     }
   }
 
