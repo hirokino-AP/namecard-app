@@ -8,7 +8,8 @@
 //
 // 【モジュール構成】
 //   ocr_config.dart       - APIキー・エンドポイント
-//   ocr_api_client.dart   - Vision API通信
+//   ocr_api_client.dart   - Vision API通信（Google Cloud Vision）
+//   ocr_vision_client.dart - 端末内OCR（Apple Vision・画像を外部送信しない）
 //   ocr_normalizer.dart   - 前処理・正規化
 //   ocr_name_parser.dart  - 氏名・よみがな判定
 //   ocr_line_parser.dart  - 行振り分けロジック
@@ -16,6 +17,7 @@
 
 import 'dart:io';
 import 'ocr/ocr_api_client.dart';
+import 'ocr/ocr_vision_client.dart';
 import 'ocr/ocr_normalizer.dart';
 import 'ocr/ocr_name_parser.dart';
 import 'ocr/ocr_line_parser.dart';
@@ -34,8 +36,11 @@ class OcrService {
   // ============================================================
   static Future<Map<String, String>> recognizeBusinessCard(File imageFile) async {
     try {
-      // ① Vision APIでテキスト抽出
-      final lines = await OcrApiClient.extractText(imageFile);
+      // ① OCRエンジンを設定で切り替えてテキスト抽出
+      final engine = await SettingsService.getOcrEngine();
+      final lines = engine == SettingsService.ocrEngineDevice
+          ? await OcrVisionClient.extractText(imageFile)
+          : await OcrApiClient.extractText(imageFile);
 
       // ② 前処理（郵便番号+住所の分離）
       final splitLines = OcrNormalizer.splitZipAndAddress(lines);
