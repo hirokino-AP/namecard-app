@@ -16,6 +16,7 @@ import 'card_detail_screen.dart';
 import 'card_edit_screen.dart';
 import 'duplicate_screen.dart';
 import 'company_dict_screen.dart';
+import 'company_merge_screen.dart';
 
 class CardListScreen extends StatefulWidget {
   const CardListScreen({super.key});
@@ -200,6 +201,21 @@ class _CardListScreenState extends State<CardListScreen> {
                 Icon(CupertinoIcons.doc_on_doc, size: 20),
                 SizedBox(width: 8),
                 Text('重複名刺チェック'),
+              ],
+            ),
+          ),
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.of(context).pop();
+              Navigator.of(context).push(CupertinoPageRoute(
+                  builder: (_) => const CompanyMergeScreen()));
+            },
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(CupertinoIcons.building_2_fill, size: 20),
+                SizedBox(width: 8),
+                Text('重複企業名チェック'),
               ],
             ),
           ),

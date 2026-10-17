@@ -15,6 +15,8 @@ import 'package:flutter/cupertino.dart';
 import 'package:provider/provider.dart';
 import '../db/database_helper.dart';
 import '../providers/auth_provider.dart';
+import '../providers/card_provider.dart';
+import '../services/company_merge_service.dart';
 
 class CompanyDictScreen extends StatefulWidget {
   const CompanyDictScreen({super.key});
@@ -128,6 +130,125 @@ class _CompanyDictScreenState extends State<CompanyDictScreen> {
         _rows.removeWhere((r) => r['company'] == company);
       }
     });
+  }
+
+  // 社名変更：名刺と会社辞書の会社名をまとめて書き換える（履歴に残り、取り消せる）
+  Future<void> _rename(String company) async {
+    final uid = context.read<AuthProvider>().uid;
+    final input = TextEditingController(text: company);
+    final entered = await showCupertinoDialog<String>(
+      context: context,
+      builder: (_) => CupertinoAlertDialog(
+        title: const Text('社名を変更'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            const Text(
+                '名刺と会社辞書の会社名を、まとめて書き換えます。\n入力中の未保存の内容は、先に「保存」してください。',
+                style: TextStyle(fontSize: 12)),
+            const SizedBox(height: 8),
+            CupertinoTextField(controller: input, autofocus: true),
+          ],
+        ),
+        actions: [
+          CupertinoDialogAction(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('キャンセル'),
+          ),
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            onPressed: () => Navigator.of(context).pop(input.text),
+            child: const Text('次へ'),
+          ),
+        ],
+      ),
+    );
+    // 閉じるアニメーション中の破棄を避けるため、少し遅らせて破棄する
+    Future.delayed(const Duration(milliseconds: 600), input.dispose);
+    final newName = (entered ?? '').trim();
+    if (newName.isEmpty || newName == company || !mounted) return;
+
+    final db = await DatabaseHelper.instance.database;
+    final dictHit = await db.query('company_dict',
+        columns: ['id'],
+        where: 'user_id = ? AND company = ?',
+        whereArgs: [uid, newName],
+        limit: 1);
+    final cardHit = await db.query('business_cards',
+        columns: ['id'],
+        where: 'user_id = ? AND company = ?',
+        whereArgs: [uid, newName],
+        limit: 1);
+    final isMerge = dictHit.isNotEmpty || cardHit.isNotEmpty;
+    final count =
+        await CompanyMergeService.countCardsToChange(uid, [company], newName);
+    if (!mounted) return;
+    final head = isMerge
+        ? '「$newName」はすでにある会社名です。\n「$company」の名刺 $count 件を、その会社に統合します。'
+        : '「$company」→「$newName」\n名刺 $count 件の会社名が書き換わります。';
+    final ok = await showCupertinoDialog<bool>(
+      context: context,
+      builder: (_) => CupertinoAlertDialog(
+        title: Text(isMerge ? '統合の確認' : '社名変更の確認'),
+        content: Text('$head\n\n'
+            '事前に設定画面から「データをバックアップ（AirDrop）」を取っておくと安心です。\n'
+            '実行後も、「重複企業名チェック」右上の「履歴」から取り消せます。'),
+        actions: [
+          CupertinoDialogAction(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('キャンセル'),
+          ),
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('実行する'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    try {
+      final changed = await CompanyMergeService.applyRename(
+          uid, [company], newName,
+          type: 'rename');
+      if (!mounted) return;
+      await context.read<CardProvider>().loadCards(uid);
+      if (!mounted) return;
+      await _loadRows();
+      if (!mounted) return;
+      // 変更後の会社名の入力欄を、保存済みの値に更新する
+      for (final row in _rows) {
+        if (row['company'] == newName) {
+          _kanaControllers[newName]?.text = row['company_kana'] as String? ?? '';
+          _abbrevControllers[newName]?.text = row['abbreviation'] as String? ?? '';
+          _industryControllers[newName]?.text = row['industry'] as String? ?? '';
+        }
+      }
+      setState(() {});
+      _notice('変更しました', '名刺 $changed 件の会社名を「$newName」にしました。');
+    } catch (e) {
+      if (!mounted) return;
+      _notice('エラー', '変更に失敗しました。名刺データは変更されていません。\n$e');
+    }
+  }
+
+  void _notice(String title, String message) {
+    showCupertinoDialog(
+      context: context,
+      builder: (_) => CupertinoAlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   // 検索用の正規化：空白除去・全角英数→半角・カタカナ→ひらがな・小文字化
@@ -330,6 +451,12 @@ class _CompanyDictScreenState extends State<CompanyDictScreen> {
               Expanded(
                 child: Text(company,
                     style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              ),
+              CupertinoButton(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                minimumSize: Size.zero,
+                onPressed: () => _rename(company),
+                child: const Icon(CupertinoIcons.pencil, size: 18),
               ),
               if (confirmed)
                 Container(

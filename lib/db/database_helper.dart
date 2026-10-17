@@ -295,15 +295,30 @@ class DatabaseHelper {
       final db = await database;
       final now = DateTime.now().toIso8601String();
 
-      // 既存の辞書を削除
-      await db.delete('company_dict', where: 'user_id = ?', whereArgs: [userId]);
+      // 既存の辞書の手入力内容（よみがな・略称・業種・確認済み）を控える
+      final oldRows = await db.query('company_dict',
+          where: 'user_id = ?', whereArgs: [userId]);
+      final Map<String, Map<String, dynamic>> oldDict = {};
+      for (final r in oldRows) {
+        final name = r['company'] as String;
+        final prev = oldDict[name];
+        if (prev == null) {
+          oldDict[name] = Map<String, dynamic>.from(r);
+        } else {
+          // 同じ会社名の行が複数ある場合は、空でない値を引き継ぐ
+          for (final f in ['company_kana', 'abbreviation', 'industry']) {
+            if (((prev[f] as String?) ?? '').isEmpty) prev[f] = r[f];
+          }
+          if (((r['confirmed'] as int?) ?? 0) == 0) prev['confirmed'] = 0;
+        }
+      }
 
-      // business_cardsから会社名・よみがなを集計
+      // business_cardsから会社名・よみがなを集計（会社名ごとに1行）
       final rows = await db.rawQuery('''
-        SELECT company, company_kana, COUNT(*) as cnt
+        SELECT company, MAX(company_kana) AS company_kana, COUNT(*) as cnt
         FROM business_cards
         WHERE user_id = ? AND company != ''
-        GROUP BY company, company_kana
+        GROUP BY company
         ORDER BY cnt DESC
       ''', [userId]);
 
@@ -319,24 +334,29 @@ class DatabaseHelper {
         // NLFramework失敗時は空のまま
       }
 
-      // company_dictに登録
+      // company_dictに登録（削除と再登録は同じトランザクション内で行う）
       await db.transaction((txn) async {
+        await txn.delete('company_dict',
+            where: 'user_id = ?', whereArgs: [userId]);
         for (final row in rows) {
           final company = row['company'] as String;
-          // よみがな：既存データ優先→NLFramework→空文字
-          String kana = row['company_kana'] as String? ?? '';
+          final old = oldDict[company];
+          // よみがな：辞書の手入力→名刺の値→NLFramework→空文字
+          String kana = (old?['company_kana'] as String?) ?? '';
+          if (kana.isEmpty) kana = row['company_kana'] as String? ?? '';
           if (kana.isEmpty) kana = yomiganaMap[company] ?? '';
           final count = row['cnt'] as int;
-          // 省庁略称を自動設定
-          final abbr = _getAbbreviation(company);
+          // 略称：手入力を優先し、なければ省庁略称を自動設定
+          String abbr = (old?['abbreviation'] as String?) ?? '';
+          if (abbr.isEmpty) abbr = _getAbbreviation(company);
           await txn.insert('company_dict', {
             'user_id': userId,
             'company': company,
             'company_kana': kana,
             'abbreviation': abbr,
             'count': count,
-            'industry': '',
-            'confirmed': 0,
+            'industry': (old?['industry'] as String?) ?? '',
+            'confirmed': (old?['confirmed'] as int?) ?? 0,
             'updated_at': now,
           }, conflictAlgorithm: ConflictAlgorithm.replace);
         }
