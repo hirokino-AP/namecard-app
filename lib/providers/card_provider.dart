@@ -180,6 +180,16 @@ class CardProvider extends ChangeNotifier {
     return count;
   }
 
+  // バックアップの内容に、名刺を入れ替える（刷新）
+  int countBackupRows(String json) => _db.countBackupRows(json);
+
+  Future<int> replaceAllFromJson(String json, String userId) async {
+    final count = await _db.replaceAllFromJson(json, userId);
+
+    await loadCards(userId);
+    return count;
+  }
+
   Future<int> importFromJson(String json, String userId) async {
     final count = await _db.importFromJson(json, userId);
     if (count > 0) await loadCards(userId);

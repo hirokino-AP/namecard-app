@@ -427,13 +427,61 @@ class _CardListScreenState extends State<CardListScreen> {
     final String? json = await channel.invokeMethod('pickDatabase');
     if (json == null || !mounted) return;
     final uid = context.read<AuthProvider>().uid;
-    final count = await context.read<CardProvider>().importFromJson(json, uid);
-    if (!mounted) return;
+    final provider = context.read<CardProvider>();
+    // ① ファイルを検査（失敗・空のときは、何も削除せずにエラーを表示）
+    final int newCount;
+    try {
+      newCount = provider.countBackupRows(json);
+    } catch (e) {
+
+      if (!mounted) return;
+      _showImportMessage('取り込めませんでした',
+          '$e\n\n名刺データは変更されていません。');
+      return;
+    }
+    // ② 入れ替えの確認
+    final nowCount = provider.cards.length;
+    final ok = await showCupertinoDialog<bool>(
+      context: context,
+      builder: (_) => CupertinoAlertDialog(
+        title: const Text('名刺を入れ替えますか？'),
+        content: Text(
+            'いまの名刺 $nowCount 件をすべて削除して、ファイルの名刺 $newCount 件に入れ替えます。\n\n'
+            'この操作は取り消せません。必要なら、先にバックアップを取ってください。\n'
+            '名刺画像と、会社辞書の手入力内容（略称・業種など）は、ファイルに含まれません。'),
+        actions: [
+          CupertinoDialogAction(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('キャンセル'),
+          ),
+          CupertinoDialogAction(
+            isDestructiveAction: true,
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('入れ替える'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    // ③ 入れ替え
+    try {
+      final count = await provider.replaceAllFromJson(json, uid);
+
+      if (!mounted) return;
+      _showImportMessage('入れ替え完了', '$count件の名刺に入れ替えました。');
+    } catch (e) {
+      if (!mounted) return;
+      _showImportMessage('入れ替えに失敗しました',
+          '$e\n\n名刺データは変更されていません。');
+    }
+  }
+
+  void _showImportMessage(String title, String message) {
     showCupertinoDialog(
       context: context,
       builder: (_) => CupertinoAlertDialog(
-        title: const Text('インポート完了'),
-        content: Text('$count件の名刺をインポートしました。'),
+        title: Text(title),
+        content: Text(message),
         actions: [
           CupertinoDialogAction(
             isDefaultAction: true,

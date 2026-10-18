@@ -600,6 +600,77 @@ class DatabaseHelper {
   }
 
   // ============================================================
+  // バックアップの入れ替え（刷新）
+  // ============================================================
+
+  // JSONを検査して、名刺リストを返す。失敗・空・不正な場合は例外
+  List<Map<String, dynamic>> _parseBackupRows(String jsonStr) {
+    final dynamic decoded;
+    try {
+      decoded = json.decode(jsonStr);
+    } catch (e) {
+      throw Exception('バックアップファイルを読み込めませんでした');
+    }
+    if (decoded is! List) {
+      throw Exception('バックアップファイルの形式が正しくありません');
+    }
+    if (decoded.isEmpty) {
+
+      throw Exception('バックアップファイルに名刺が入っていません');
+    }
+    final rows = <Map<String, dynamic>>[];
+    for (final row in decoded) {
+      if (row is! Map) {
+        throw Exception('バックアップファイルの形式が正しくありません');
+      }
+      rows.add(Map<String, dynamic>.from(row));
+    }
+    // 氏名か会社名が入った名刺が、1件もない場合は、不正なファイルとみなす
+    final hasContent = rows.any((r) =>
+        ((r['name'] as String?) ?? '').trim().isNotEmpty ||
+        ((r['company'] as String?) ?? '').trim().isNotEmpty);
+    if (!hasContent) {
+      throw Exception('バックアップファイルの内容が正しくありません');
+    }
+    return rows;
+  }
+
+  // 入れ替え前の確認用：ファイルの名刺件数（検査に失敗したら例外）
+  int countBackupRows(String jsonStr) => _parseBackupRows(jsonStr).length;
+
+  // 名刺を、バックアップの内容に入れ替える（削除と登録は1つのトランザクション）
+  // 戻り値：登録した件数。検査に失敗した場合は、何も削除せず例外
+  Future<int> replaceAllFromJson(String jsonStr, String userId) async {
+    final rows = _parseBackupRows(jsonStr);
+    final db = await database;
+    int count = 0;
+    await db.transaction((txn) async {
+      await txn.delete('business_cards',
+          where: 'user_id = ?', whereArgs: [userId]);
+      for (final row in rows) {
+
+        final map = Map<String, dynamic>.from(row);
+        map['user_id'] = userId;
+        map.remove('id');
+        await txn.insert('business_cards', map,
+            conflictAlgorithm: ConflictAlgorithm.replace);
+        count++;
+      }
+    });
+    // 会社辞書は、入れ替えた名刺から作り直す（同じ会社名の略称・業種・確認済みは引き継がれる）
+    await rebuildCompanyDict(userId);
+    // 会社名の統合履歴は、名刺IDが変わるので消す
+    try {
+      final dir = await getDatabasesPath();
+      final f = File(join(dir, 'company_merge_history.json'));
+      if (await f.exists()) await f.delete();
+    } catch (e) {
+      // 履歴の削除に失敗しても、入れ替えは成功とする
+    }
+    return count;
+  }
+
+  // ============================================================
   // バックアップ・リストア
   // ============================================================
 
