@@ -152,4 +152,26 @@ class SettingsService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_keySaveCardImage, save);
   }
+
+  // ── OCRエンジン設定 ──
+  // 'cloud'  = Google Cloud Vision（現行・画像をGoogleに送信）
+  // 'device' = iPhone内蔵OCR（Apple Vision・端末内で完結）
+  static const String _keyOcrEngine = 'ocr_engine';
+  static const String ocrEngineCloud = 'cloud';
+  static const String ocrEngineDevice = 'device';
+  static const String defaultOcrEngine = ocrEngineCloud; // 既定は現行のまま
+
+  // OCRエンジンを取得
+  static Future<String> getOcrEngine() async {
+    final prefs = await SharedPreferences.getInstance();
+    final v = prefs.getString(_keyOcrEngine) ?? defaultOcrEngine;
+    return v == ocrEngineDevice ? ocrEngineDevice : ocrEngineCloud;
+  }
+
+  // OCRエンジンを保存
+  static Future<void> setOcrEngine(String engine) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+        _keyOcrEngine, engine == ocrEngineDevice ? ocrEngineDevice : ocrEngineCloud);
+  }
 }

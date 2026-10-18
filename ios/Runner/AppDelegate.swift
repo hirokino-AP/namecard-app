@@ -3,6 +3,8 @@ import UIKit
 import UniformTypeIdentifiers
 import SQLite3
 import VisionKit
+import Vision
+import ImageIO
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate, UIDocumentPickerDelegate, VNDocumentCameraViewControllerDelegate {
@@ -73,6 +75,13 @@ import VisionKit
         if let vc = UIApplication.shared.windows.first?.rootViewController {
           vc.present(scanner, animated: true)
         }
+      } else if call.method == "recognizeText" {
+        // 端末内OCR（Apple Vision）。引数: 画像パス / 戻り値: 行テキストのリスト
+        guard let path = call.arguments as? String else {
+          result(FlutterError(code: "BAD_ARGS", message: "画像パスが不正です", details: nil))
+          return
+        }
+        self.recognizeText(path: path, result: result)
       } else if call.method == "importFromBackup" {
         let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
         let backupURL = docsDir.appendingPathComponent("backup/namecard.db")
@@ -187,6 +196,66 @@ import VisionKit
   func documentCameraViewController(_ controller: VNDocumentCameraViewController, didFailWithError error: Error) {
     controller.dismiss(animated: true)
     documentPickerResult?(FlutterError(code: "SCAN_ERROR", message: error.localizedDescription, details: nil))
+  }
+
+  // ============================================================
+  // 端末内OCR（Apple Vision）：画像は端末外に送信しない
+  // 認識結果を上→下（同じ高さなら左→右）の順に、認識ブロック1つ=1行で返す
+  // ============================================================
+  func recognizeText(path: String, result: @escaping FlutterResult) {
+    guard #available(iOS 16.0, *) else {
+      result(FlutterError(code: "UNSUPPORTED_OS", message: "端末内OCRはiOS 16以降が必要です", details: nil))
+      return
+    }
+    guard let image = UIImage(contentsOfFile: path), let cgImage = image.cgImage else {
+      result(FlutterError(code: "BAD_IMAGE", message: "画像を読み込めませんでした", details: nil))
+      return
+    }
+    let orientation = cgOrientation(from: image.imageOrientation)
+
+    DispatchQueue.global(qos: .userInitiated).async {
+      let request = VNRecognizeTextRequest()
+      request.recognitionLevel = .accurate
+      request.recognitionLanguages = ["ja-JP", "en-US"]
+      request.usesLanguageCorrection = false
+
+      let handler = VNImageRequestHandler(cgImage: cgImage, orientation: orientation, options: [:])
+      do {
+        try handler.perform([request])
+        let observations = request.results ?? []
+        let sorted = observations.sorted { a, b in
+          let yA = a.boundingBox.midY
+          let yB = b.boundingBox.midY
+          if yA != yB { return yA > yB }
+          return a.boundingBox.minX < b.boundingBox.minX
+        }
+        let lines: [String] = sorted.compactMap { obs in
+          guard let text = obs.topCandidates(1).first?.string else { return nil }
+          let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+          return t.isEmpty ? nil : t
+        }
+        DispatchQueue.main.async { result(lines) }
+      } catch {
+        DispatchQueue.main.async {
+          result(FlutterError(code: "OCR_FAILED", message: error.localizedDescription, details: nil))
+        }
+      }
+    }
+  }
+
+  // UIImageの向き → Visionに渡す向き
+  func cgOrientation(from o: UIImage.Orientation) -> CGImagePropertyOrientation {
+    switch o {
+    case .up: return .up
+    case .upMirrored: return .upMirrored
+    case .down: return .down
+    case .downMirrored: return .downMirrored
+    case .left: return .left
+    case .leftMirrored: return .leftMirrored
+    case .right: return .right
+    case .rightMirrored: return .rightMirrored
+    @unknown default: return .up
+    }
   }
 
   // 漢字→よみがな変換（Apple NLFramework使用）

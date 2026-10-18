@@ -35,6 +35,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   int _companyMatchLength = SettingsService.defaultCompanyMatchLength;
   int _companyDictSize = SettingsService.defaultCompanyDictSize;
   List<String> _ocrPrefixList = [];
+  String _ocrEngine = SettingsService.defaultOcrEngine;
 
   // テーマカラー選択肢
   static const List<Map<String, String>> _themeColors = [
@@ -67,6 +68,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final matchLength = await SettingsService.getCompanyMatchLength();
     final dictSize = await SettingsService.getCompanyDictSize();
     final ocrPrefixes = await SettingsService.getOcrPrefixList();
+    final ocrEngine = await SettingsService.getOcrEngine();
     setState(() {
       _voiceSearchDelay   = delay;
       _displayCount       = count;
@@ -76,6 +78,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _companyMatchLength = matchLength;
       _companyDictSize    = dictSize;
       _ocrPrefixList      = ocrPrefixes;
+      _ocrEngine          = ocrEngine;
       _isLoading          = false;
     });
   }
@@ -227,6 +230,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await SettingsService.setCompanyMatchLength(_companyMatchLength);
     await SettingsService.setCompanyDictSize(_companyDictSize);
     await SettingsService.setOcrPrefixes(_ocrPrefixList.join(','));
+    await SettingsService.setOcrEngine(_ocrEngine);
     if (!mounted) return;
     showCupertinoDialog(
       context: context,
@@ -257,6 +261,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       count == 0 ? '制限なし' : '$count件';
 
   String _fontSizeLabel(double size) => '${size.toInt()}pt';
+
+  String _ocrEngineLabel(String engine) =>
+      engine == SettingsService.ocrEngineDevice
+          ? 'iPhone内蔵（端末内）'
+          : 'Google Cloud Vision';
 
   void _showPicker<T>({
     required String title,
@@ -413,8 +422,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   // ── OCR設定 ──
                   CupertinoListSection.insetGrouped(
                     header: const Text('OCR設定'),
-                    footer: const Text('名刺読み取り時に除去するプレフィックスキーワードです。タップで削除、＋で追加。'),
+                    footer: const Text('iPhone内蔵は名刺画像を外部に送信しません（iOS 16以降）。Google Cloud Visionは画像をGoogleに送信します。\n下のキーワードは、読み取り時に除去するプレフィックスです。タップで削除、＋で追加。'),
                     children: [
+                      CupertinoListTile(
+                        title: const Text('OCRエンジン'),
+                        additionalInfo: Text(
+                          _ocrEngineLabel(_ocrEngine),
+                          style: const TextStyle(color: CupertinoColors.systemBlue),
+                        ),
+                        trailing: const CupertinoListTileChevron(),
+                        onTap: () => _showPicker<String>(
+                          title: 'OCRエンジン',
+                          message: '名刺読み取りに使うOCRを選択します',
+                          options: const [
+                            SettingsService.ocrEngineCloud,
+                            SettingsService.ocrEngineDevice,
+                          ],
+                          current: _ocrEngine,
+                          label: _ocrEngineLabel,
+                          onSelect: (v) => _ocrEngine = v,
+                        ),
+                      ),
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                         child: Column(
