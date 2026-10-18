@@ -44,6 +44,7 @@ import VisionKit
         result(results)
       } else if call.method == "pickDatabase" {
         self.documentPickerResult = result
+        self.pickerMode = "db"  // CSV選択後に残ったモードを、DBインポートで必ず戻す
         let types = [UTType.data]
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: types)
         picker.delegate = self
