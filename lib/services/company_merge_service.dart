@@ -16,7 +16,7 @@
 //          （iTunesファイル共有には表示されない）
 //   内容  : 変更した名刺のIDと元の会社名、辞書の元の行のみ
 //          （電話・メールなどは含まない）
-//   件数  : 直近10件。取り消せるのは、最も新しい1件のみ。
+//   件数  : 直近10件。後の履歴が同じ会社名に触れていなければ、どれでも取り消せる。
 // ============================================================
 
 import 'dart:convert';
@@ -325,12 +325,53 @@ class CompanyMergeService {
 
   // ---------- 取り消し ----------
 
-  // 最も新しい1件を取り消す
-  static Future<UndoResult> undoLatest(String uid) async {
+  // 指定した履歴より新しい履歴のうち、同じ会社名に触れているもの
+  // （空なら取り消せる。古い順の一覧を渡す）
+  static List<MergeHistoryEntry> blockersOf(
+      MergeHistoryEntry target, List<MergeHistoryEntry> oldestFirst) {
+    final idx = oldestFirst.indexWhere((e) => e.id == target.id);
+    if (idx < 0) return [];
+    final names = <String>{...target.fromNames, target.toName};
+    final result = <MergeHistoryEntry>[];
+
+    for (final e in oldestFirst.sublist(idx + 1)) {
+      final other = <String>{...e.fromNames, e.toName};
+      if (other.intersection(names).isNotEmpty) result.add(e);
+    }
+    return result;
+  }
+
+  // 取り消すと書き戻る名刺の件数（今も統合後の会社名のままのもの）
+  static Future<int> countRestorable(
+      String uid, MergeHistoryEntry entry) async {
+    final db = await DatabaseHelper.instance.database;
+    final ids = entry.cards.map((c) => c[0]).toList();
+    int n = 0;
+    for (var i = 0; i < ids.length; i += 500) {
+      final end = i + 500 > ids.length ? ids.length : i + 500;
+      final chunk = ids.sublist(i, end);
+      final r = await db.rawQuery(
+          'SELECT COUNT(*) FROM business_cards '
+          'WHERE user_id = ? AND company = ? '
+          'AND id IN (${_placeholders(chunk.length)})',
+          [uid, entry.toName, ...chunk]);
+      n += Sqflite.firstIntValue(r) ?? 0;
+    }
+    return n;
+  }
+
+  // 指定した履歴を取り消す（後の履歴が同じ会社名に触れている場合は取り消せない）
+  static Future<UndoResult> undoEntry(String uid, int entryId) async {
     final all = await _readAll();
     final mine = all.where((e) => e.userId == uid).toList();
-    if (mine.isEmpty) throw Exception('取り消せる履歴がありません');
-    final entry = mine.last;
+    final found = mine.where((e) => e.id == entryId).toList();
+    if (found.isEmpty) throw Exception('履歴が見つかりません');
+
+    final entry = found.first;
+    final blockers = blockersOf(entry, mine);
+    if (blockers.isNotEmpty) {
+      throw Exception('先に「${blockers.last.toName}」の履歴を取り消してください');
+    }
     final names = <String>{...entry.fromNames, entry.toName}.toList();
     final phD = _placeholders(names.length);
     final db = await DatabaseHelper.instance.database;

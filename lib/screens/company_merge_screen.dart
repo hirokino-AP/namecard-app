@@ -240,46 +240,92 @@ class _CompanyMergeScreenState extends State<CompanyMergeScreen> {
     );
   }
 
-  // 履歴の一覧を表示し、最も新しい1件だけ取り消せるようにする
+  // 履歴の一覧（直近10件）。取り消したい1件を選ぶ
   Future<void> _showHistory() async {
     final uid = context.read<AuthProvider>().uid;
-    final history = await CompanyMergeService.loadHistory(uid);
+    final history = await CompanyMergeService.loadHistory(uid); // 新しい順
     if (!mounted) return;
     if (history.isEmpty) {
       _showMessage('履歴', '取り消せる履歴はありません。');
       return;
     }
-    final latest = history.first;
-    final lines = history.take(10).map((h) {
-      final t = h.at;
-      final d = '${t.month}/${t.day} '
-          '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
-      return '$d ${h.typeLabel}：→「${h.toName}」（${h.changedCount}件）';
-    }).join('\n');
-    final undo = await showCupertinoDialog<bool>(
+    final oldestFirst = history.reversed.toList();
+    final picked = await showCupertinoModalPopup<MergeHistoryEntry>(
+      context: context,
+      builder: (ctx) => CupertinoActionSheet(
+        title: const Text('履歴（タップした1件を取り消します）'),
+        message: const Text('新しい順です。「先に取り消しが必要」は、後の履歴が同じ会社名に触れているためです。'),
+        actions: history.map((h) {
+          final blocked =
+              CompanyMergeService.blockersOf(h, oldestFirst).isNotEmpty;
+
+          final t = h.at;
+          final d = '${t.month}/${t.day} '
+              '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+          return CupertinoActionSheetAction(
+            onPressed: () => Navigator.of(ctx).pop(h),
+            child: Text(
+              '$d ${h.typeLabel}→「${h.toName}」（${h.changedCount}件）'
+              '${blocked ? "\n先に取り消しが必要" : ""}',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  fontSize: 14,
+                  color: blocked
+                      ? CupertinoColors.systemGrey
+                      : CupertinoColors.systemBlue),
+            ),
+          );
+        }).toList(),
+        cancelButton: CupertinoActionSheetAction(
+          onPressed: () => Navigator.of(ctx).pop(),
+          child: const Text('閉じる'),
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    await _undoPicked(uid, picked, oldestFirst);
+  }
+
+  // 選んだ履歴を取り消す（確認 → 実行）
+  Future<void> _undoPicked(String uid, MergeHistoryEntry entry,
+      List<MergeHistoryEntry> oldestFirst) async {
+    final blockers = CompanyMergeService.blockersOf(entry, oldestFirst);
+    if (blockers.isNotEmpty) {
+
+      _showMessage('先に取り消してください',
+          'この履歴より新しい「${blockers.last.toName}」の履歴が、同じ会社名に触れています。\n新しい履歴から順に取り消してください。');
+      return;
+    }
+    final count = await CompanyMergeService.countRestorable(uid, entry);
+    if (!mounted) return;
+    final ok = await showCupertinoDialog<bool>(
       context: context,
       builder: (_) => CupertinoAlertDialog(
-        title: const Text('履歴（新しい順）'),
+        title: const Text('取り消しの確認'),
         content: Text(
-            '$lines\n\n取り消せるのは、いちばん新しい1件（「${latest.toName}」）のみです。'),
+            '${entry.typeLabel}「${entry.toName}」を取り消します。\n'
+            '名刺 $count 件の会社名を、元の表記（${entry.fromNames.join("、")}）に戻します。\n\n'
+            'その後に別の名前へ変えた名刺や、削除した名刺は、そのままです。\n'
+            '統合後に辞書で直した略称などは、統合前の値に戻ります。'),
         actions: [
           CupertinoDialogAction(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('閉じる'),
+            child: const Text('キャンセル'),
           ),
           CupertinoDialogAction(
             isDestructiveAction: true,
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('最新の1件を取り消す'),
+            child: const Text('取り消す'),
           ),
         ],
       ),
     );
-    if (undo != true || !mounted) return;
+    if (ok != true || !mounted) return;
 
     setState(() => _isWorking = true);
     try {
-      final r = await CompanyMergeService.undoLatest(uid);
+
+      final r = await CompanyMergeService.undoEntry(uid, entry.id);
       if (!mounted) return;
       await context.read<CardProvider>().loadCards(uid);
       if (!mounted) return;
