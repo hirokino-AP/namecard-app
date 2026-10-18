@@ -35,6 +35,17 @@ import 'package:path_provider/path_provider.dart';
 import '../models/business_card.dart';
 
 
+// 端末内バックアップ1件分
+class LocalBackupInfo {
+  final String path;
+  final String name;
+  final String label;
+  final DateTime modified;
+  final int bytes;
+  const LocalBackupInfo(
+      this.path, this.name, this.label, this.modified, this.bytes);
+}
+
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._internal();
   static Database? _db;
@@ -642,6 +653,11 @@ class DatabaseHelper {
   // 戻り値：登録した件数。検査に失敗した場合は、何も削除せず例外
   Future<int> replaceAllFromJson(String jsonStr, String userId) async {
     final rows = _parseBackupRows(jsonStr);
+    // 入れ替え前の状態を、端末内バックアップとして自動保存（保存できなければ中止）
+    final safety = await saveLocalBackup(prefix: 'before_replace', keep: 3);
+    if (safety == null) {
+      throw Exception('入れ替え前のバックアップを作れなかったため、中止しました');
+    }
     final db = await database;
     int count = 0;
     await db.transaction((txn) async {
@@ -673,6 +689,132 @@ class DatabaseHelper {
   // ============================================================
   // バックアップ・リストア
   // ============================================================
+
+  // ---------- 端末内バックアップ ----------
+  // 保存先: Library/Application Support/backups
+  // iTunesファイル共有には表示されない。iOSの端末バックアップには通常含まれる。
+  // アプリを削除すると消える。
+
+  Future<Directory> _localBackupDir() async {
+    final base = await getApplicationSupportDirectory();
+    final dir = Directory(join(base.path, 'backups'));
+    if (!await dir.exists()) await dir.create(recursive: true);
+    return dir;
+  }
+
+  static const Map<String, String> _backupKinds = {
+    'manual': '手動',
+    'before_replace': '入れ替え前（自動）',
+    'before_restore': '復元前（自動）',
+  };
+
+  // 端末内にバックアップを保存する。失敗したら null
+  Future<String?> saveLocalBackup(
+      {String prefix = 'manual', int keep = 10}) async {
+    try {
+      await database; // DBファイルが無ければ作られる
+      final dbPath = await getDatabasesPath();
+      final srcPath = join(dbPath, 'app_namecard.db');
+      if (!await File(srcPath).exists()) return null;
+      final dir = await _localBackupDir();
+      final n = DateTime.now();
+      String two(int v) => v.toString().padLeft(2, '0');
+      final stamp =
+          '${n.year}${two(n.month)}${two(n.day)}_${two(n.hour)}${two(n.minute)}${two(n.second)}';
+      final destPath = join(dir.path, 'namecard_${prefix}_$stamp.db');
+      await close();
+      await File(srcPath).copy(destPath);
+      await _pruneLocalBackups(dir, prefix, keep);
+      return destPath;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  Future<void> _pruneLocalBackups(
+      Directory dir, String prefix, int keep) async {
+    final files = dir
+        .listSync()
+        .whereType<File>()
+        .where((f) {
+          final name = basename(f.path);
+          return name.startsWith('namecard_${prefix}_') && name.endsWith('.db');
+        })
+        .toList()
+      ..sort((a, b) => basename(b.path).compareTo(basename(a.path)));
+    for (final f in files.skip(keep)) {
+      try {
+        await f.delete();
+      } catch (e) {
+        // 削除に失敗しても続行
+      }
+    }
+  }
+
+  // 端末内バックアップの一覧（新しい順）
+  Future<List<LocalBackupInfo>> listLocalBackups() async {
+    final dir = await _localBackupDir();
+    final result = <LocalBackupInfo>[];
+    for (final f in dir.listSync().whereType<File>()) {
+      final name = basename(f.path);
+      if (!name.startsWith('namecard_') || !name.endsWith('.db')) continue;
+      String label = 'その他';
+      _backupKinds.forEach((k, v) {
+        if (name.startsWith('namecard_${k}_')) label = v;
+      });
+      final stat = f.statSync();
+      result.add(LocalBackupInfo(f.path, name, label, stat.modified, stat.size));
+    }
+    result.sort((a, b) => b.modified.compareTo(a.modified));
+    return result;
+  }
+
+  // バックアップの名刺件数（読み込めないバックアップなら例外）
+  Future<int> backupCardCount(String path) async {
+    Database? b;
+    try {
+      b = await openDatabase(path, readOnly: true);
+      final r = await b.rawQuery('SELECT COUNT(*) AS c FROM business_cards');
+      return Sqflite.firstIntValue(r) ?? 0;
+    } finally {
+      await b?.close();
+    }
+  }
+
+  // 端末内バックアップから復元する（名刺・会社辞書がバックアップの内容になる）
+  Future<void> restoreLocalBackup(String path) async {
+    await backupCardCount(path); // 読めなければここで例外（何も変更しない）
+    final dbPath = await getDatabasesPath();
+    final target = join(dbPath, 'app_namecard.db');
+    final tmp = '$target.restore_tmp';
+    // 先に、選んだバックアップを作業用にコピーしておく
+    await File(path).copy(tmp);
+    try {
+      final safety = await saveLocalBackup(prefix: 'before_restore', keep: 3);
+      if (safety == null) {
+        throw Exception('復元前のバックアップを作れなかったため、復元を中止しました');
+      }
+      await close();
+      for (final suffix in ['-journal', '-wal', '-shm']) {
+        final j = File('$target$suffix');
+        if (await j.exists()) await j.delete();
+      }
+      await File(tmp).rename(target);
+    } catch (e) {
+      try {
+        if (await File(tmp).exists()) await File(tmp).delete();
+      } catch (_) {}
+      rethrow;
+    }
+    _db = null;
+    // 会社名の統合履歴は、名刺IDが変わるので消す
+    try {
+      final f = File(join(dbPath, 'company_merge_history.json'));
+      if (await f.exists()) await f.delete();
+    } catch (e) {
+      // 履歴の削除に失敗しても、復元は成功とする
+    }
+  }
 
   // app_namecard.dbをコピーしてバックアップファイルのパスを返す
   Future<String?> createBackup() async {

@@ -17,6 +17,7 @@ import '../db/database_helper.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
+import '../providers/card_provider.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -131,6 +132,145 @@ class _SettingsScreenState extends State<SettingsScreen> {
         text: '名刺データのバックアップファイルです。',
       ),
     );
+  }
+
+  void _showSimpleDialog(String title, String message) {
+    showCupertinoDialog(
+      context: context,
+      builder: (_) => CupertinoAlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _backupDateLabel(DateTime t) =>
+      '${t.year}/${t.month}/${t.day} ${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+  String _sizeLabel(int bytes) => bytes >= 1024 * 1024
+      ? '${(bytes / 1024 / 1024).toStringAsFixed(1)}MB'
+      : '${(bytes / 1024).round()}KB';
+
+  // 端末内にバックアップを保存
+  Future<void> _saveLocalBackup() async {
+    final provider = context.read<CardProvider>();
+    showCupertinoDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const CupertinoAlertDialog(
+        title: Text('バックアップ中...'),
+        content: Padding(
+          padding: EdgeInsets.only(top: 12),
+          child: CupertinoActivityIndicator(),
+        ),
+      ),
+    );
+    final path = await provider.saveLocalBackup();
+    if (!mounted) return;
+    Navigator.of(context).pop();
+    if (path == null) {
+      _showSimpleDialog('エラー', 'バックアップを保存できませんでした。');
+      return;
+    }
+    _showSimpleDialog('保存しました',
+        '端末内に、名刺と会社辞書のバックアップを保存しました。\n「端末内バックアップから復元」で戻せます。\n\n※アプリを削除すると、端末内のバックアップも消えます。');
+  }
+
+  // 端末内バックアップの一覧 → 選んで復元
+  Future<void> _showLocalBackups() async {
+    final provider = context.read<CardProvider>();
+    final uid = context.read<AuthProvider>().uid;
+    final list = await provider.listLocalBackups();
+    if (!mounted) return;
+    if (list.isEmpty) {
+      _showSimpleDialog('端末内バックアップ', '保存されたバックアップはありません。');
+      return;
+    }
+    final picked = await showCupertinoModalPopup<LocalBackupInfo>(
+      context: context,
+      builder: (ctx) => CupertinoActionSheet(
+        title: const Text('端末内バックアップ（タップで復元）'),
+        message: const Text('新しい順です。復元すると、いまの名刺と会社辞書は、選んだバックアップの内容に置き換わります。'),
+        actions: list
+            .map((b) => CupertinoActionSheetAction(
+                  onPressed: () => Navigator.of(ctx).pop(b),
+                  child: Text(
+                      '${_backupDateLabel(b.modified)}  ${b.label}（${_sizeLabel(b.bytes)}）',
+                      style: const TextStyle(fontSize: 14)),
+                ))
+            .toList(),
+        cancelButton: CupertinoActionSheetAction(
+          onPressed: () => Navigator.of(ctx).pop(),
+          child: const Text('閉じる'),
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    await _restoreLocalBackup(provider, uid, picked);
+  }
+
+  Future<void> _restoreLocalBackup(
+      CardProvider provider, String uid, LocalBackupInfo b) async {
+    final int count;
+    try {
+      count = await provider.backupCardCount(b.path);
+    } catch (e) {
+      if (!mounted) return;
+      _showSimpleDialog('復元できません', 'このバックアップを読み込めませんでした。\nデータは変更されていません。');
+      return;
+    }
+    if (!mounted) return;
+    final nowCount = provider.cards.length;
+    final ok = await showCupertinoDialog<bool>(
+      context: context,
+      builder: (_) => CupertinoAlertDialog(
+        title: const Text('復元しますか？'),
+        content: Text(
+            '${_backupDateLabel(b.modified)} のバックアップ（名刺 $count 件）に復元します。\n'
+            'いまの名刺 $nowCount 件と会社辞書は、この内容に置き換わります。\n\n'
+            '復元の直前の状態は、自動で保存されます（「復元前（自動）」から戻せます）。'),
+        actions: [
+          CupertinoDialogAction(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('キャンセル'),
+          ),
+          CupertinoDialogAction(
+            isDestructiveAction: true,
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('復元する'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    showCupertinoDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const CupertinoAlertDialog(
+        title: Text('復元中...'),
+        content: Padding(
+          padding: EdgeInsets.only(top: 12),
+          child: CupertinoActivityIndicator(),
+        ),
+      ),
+    );
+    try {
+      await provider.restoreLocalBackup(b.path, uid);
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      _showSimpleDialog('復元しました', '名刺 $count 件に復元しました。');
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      _showSimpleDialog('復元に失敗しました', '$e\n\n元のデータは、そのまま残っています。');
+    }
   }
 
   // OCRプレフィックスキーワードを追加
@@ -534,6 +674,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         trailing: const Icon(CupertinoIcons.share,
                             color: CupertinoColors.systemBlue),
                         onTap: _backupDatabase,
+                      ),
+                      CupertinoListTile(
+                        title: const Text('端末内にバックアップを保存'),
+                        additionalInfo: const Text('名刺・会社辞書',
+                            style: TextStyle(color: CupertinoColors.systemGrey)),
+                        trailing: const Icon(CupertinoIcons.archivebox,
+                            color: CupertinoColors.systemBlue),
+                        onTap: _saveLocalBackup,
+                      ),
+                      CupertinoListTile(
+                        title: const Text('端末内バックアップから復元'),
+                        additionalInfo: const Text('一覧から選択',
+                            style: TextStyle(color: CupertinoColors.systemGrey)),
+                        trailing: const CupertinoListTileChevron(),
+                        onTap: _showLocalBackups,
                       ),
                       CupertinoListTile(
                         title: const Text('会社辞書を更新'),

@@ -447,7 +447,7 @@ class _CardListScreenState extends State<CardListScreen> {
         title: const Text('名刺を入れ替えますか？'),
         content: Text(
             'いまの名刺 $nowCount 件をすべて削除して、ファイルの名刺 $newCount 件に入れ替えます。\n\n'
-            'この操作は取り消せません。必要なら、先にバックアップを取ってください。\n'
+            '入れ替え前の状態は、端末内に自動で保存されます（設定 →「端末内バックアップから復元」で戻せます）。\n'
             '名刺画像と、会社辞書の手入力内容（略称・業種など）は、ファイルに含まれません。'),
         actions: [
           CupertinoDialogAction(

@@ -180,6 +180,16 @@ class CardProvider extends ChangeNotifier {
     return count;
   }
 
+  // 端末内バックアップ
+  Future<String?> saveLocalBackup() => _db.saveLocalBackup();
+  Future<List<LocalBackupInfo>> listLocalBackups() => _db.listLocalBackups();
+  Future<int> backupCardCount(String path) => _db.backupCardCount(path);
+
+  Future<void> restoreLocalBackup(String path, String userId) async {
+    await _db.restoreLocalBackup(path);
+    await loadCards(userId);
+  }
+
   // バックアップの内容に、名刺を入れ替える（刷新）
   int countBackupRows(String json) => _db.countBackupRows(json);
 
